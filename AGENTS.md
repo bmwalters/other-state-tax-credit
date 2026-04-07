@@ -1,0 +1,2 @@
+- The codebase is small, so avoid using sub-agents for exploration unless true context savings are anticipated.
+- Important: this is a greenfield project, so prioritize producing a well-structured solution over maintaining existing patterns.
