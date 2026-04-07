@@ -18,12 +18,12 @@ This program reads your RSU grant and vest data as well as your declared New Yor
 1. Download Awards.json from https://ausgateway.schwab.com/api/is.EacDashboardWeb/v1/Awards?Type=All&EsppData=True&AllowFullDetails=true&IsHistoricalAwards=true&PendingTransactions=true
 1. Populate `work-location.csv` containing a sequence of interval-to-location pairs:
 
-    ```csv
-    interval,location
-    2024-08-01/2024-12-15,US-NY
-    ```
+   ```csv
+   interval,location
+   2024-08-01/2024-12-15,US-NY
+   ```
 
-    - `interval` is an [ISO 8601 Time Interval](https://en.wikipedia.org/wiki/ISO_8601#Time_intervals)
-    - `location` is an [ISO 3166-2](https://en.wikipedia.org/wiki/ISO_3166-2:US) subdivision
+   - `interval` is an [ISO 8601 Time Interval](https://en.wikipedia.org/wiki/ISO_8601#Time_intervals)
+   - `location` is an [ISO 3166-2](https://en.wikipedia.org/wiki/ISO_3166-2:US) subdivision
 
 1. `npm exec cli -- /path/to/data/`

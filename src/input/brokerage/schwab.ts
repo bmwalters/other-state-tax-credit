@@ -42,10 +42,7 @@ export const schwab: Brokerage = {
     return data.awardsDetail.restrictedStockUnits
       .filter((a) => a.awardType === "RSU")
       .map((award) => {
-        const allVestings = [
-          ...(award.pastVestings ?? []),
-          ...(award.vestingSchedules ?? []),
-        ];
+        const allVestings = [...(award.pastVestings ?? []), ...(award.vestingSchedules ?? [])];
         return {
           id: award.awardName,
           awardDate: parseDate(award.awardDate),

@@ -10,7 +10,11 @@ function printSummary(summaries: TaxYearSummary[]): void {
   for (const summary of summaries) {
     console.log(`\n=== Tax Year ${summary.taxYear} ===`);
     console.log(
-      `${"Grant".padEnd(10)} ${"Vest Date".padEnd(12)} ${"Shares".padStart(8)}  ${Object.keys(summary.weightedFractionByLocation).map((l) => (l + " %").padStart(10)).join("  ")}`,
+      `${"Grant".padEnd(10)} ${"Vest Date".padEnd(12)} ${"Shares".padStart(8)}  ${Object.keys(
+        summary.weightedFractionByLocation,
+      )
+        .map((l) => (l + " %").padStart(10))
+        .join("  ")}`,
     );
     console.log("-".repeat(40 + Object.keys(summary.weightedFractionByLocation).length * 12));
 
@@ -26,9 +30,7 @@ function printSummary(summaries: TaxYearSummary[]): void {
 
     const locations = Object.keys(summary.weightedFractionByLocation);
     const summaryFracs = locations
-      .map((l) =>
-        formatPercent(summary.weightedFractionByLocation[l] ?? 0).padStart(10),
-      )
+      .map((l) => formatPercent(summary.weightedFractionByLocation[l] ?? 0).padStart(10))
       .join("  ");
     console.log("-".repeat(40 + locations.length * 12));
     console.log(

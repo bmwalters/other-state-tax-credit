@@ -18,9 +18,7 @@ describe("computeAllocations", () => {
           vests: [{ date: pd("2024-07-01"), shares: 100 }],
         },
       ],
-      workIntervals: [
-        { start: pd("2024-01-01"), end: pd("2024-12-31"), location: "US-NY" },
-      ],
+      workIntervals: [{ start: pd("2024-01-01"), end: pd("2024-12-31"), location: "US-NY" }],
     };
 
     const result = computeAllocations(input);
@@ -94,9 +92,7 @@ describe("computeAllocations", () => {
           ],
         },
       ],
-      workIntervals: [
-        { start: pd("2023-01-01"), end: pd("2025-01-01"), location: "US-NY" },
-      ],
+      workIntervals: [{ start: pd("2023-01-01"), end: pd("2025-01-01"), location: "US-NY" }],
     };
 
     const result = computeAllocations(input);

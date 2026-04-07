@@ -1,6 +1,5 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { Temporal } from "temporal-polyfill";
 import type { Brokerage, Grant, InputData, WorkInterval } from "../types.ts";
 import { schwab } from "./brokerage/schwab.ts";
 import { parseInterval } from "./util/date.ts";
@@ -14,14 +13,17 @@ function parseWorkLocation(content: string): WorkInterval[] {
     throw new Error("work-location.csv: missing 'interval' header");
   }
 
-  return lines.slice(1).filter(Boolean).map((line) => {
-    const [interval, location] = line.split(",").map((s) => s.trim());
-    if (!interval || !location) {
-      throw new Error(`work-location.csv: malformed line: ${line}`);
-    }
-    const { start, end } = parseInterval(interval);
-    return { start, end, location };
-  });
+  return lines
+    .slice(1)
+    .filter(Boolean)
+    .map((line) => {
+      const [interval, location] = line.split(",").map((s) => s.trim());
+      if (!interval || !location) {
+        throw new Error(`work-location.csv: malformed line: ${line}`);
+      }
+      const { start, end } = parseInterval(interval);
+      return { start, end, location };
+    });
 }
 
 export function loadDirectory(dirPath: string): InputData {

@@ -27,9 +27,7 @@ export function parseInterval(interval: string): {
   const isDuration = (s: string) => /^[+-]?P/i.test(s);
 
   if (isDuration(lhs) && isDuration(rhs)) {
-    throw new Error(
-      `malformed interval (both sides are durations): ${interval}`,
-    );
+    throw new Error(`malformed interval (both sides are durations): ${interval}`);
   }
 
   if (isDuration(lhs)) {
