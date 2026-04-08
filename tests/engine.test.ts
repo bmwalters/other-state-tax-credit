@@ -15,7 +15,7 @@ describe("computeAllocations", () => {
           id: "G1",
           awardDate: pd("2024-01-01"),
           symbol: "XYZ",
-          vests: [{ date: pd("2024-07-01"), shares: 100 }],
+          vests: [{ date: pd("2024-07-01"), shares: 100, fmvPerShare: 50 }],
         },
       ],
       workIntervals: [{ start: pd("2024-01-01"), end: pd("2024-12-31"), location: "US-NY" }],
@@ -25,7 +25,10 @@ describe("computeAllocations", () => {
     expect(result).toHaveLength(1);
     expect(result[0].taxYear).toBe(2024);
     expect(result[0].totalShares).toBe(100);
+    expect(result[0].totalIncome).toBe(5000);
     expect(result[0].vestAllocations[0].fractionByLocation["US-NY"]).toBeCloseTo(1.0);
+    expect(result[0].vestAllocations[0].incomeByLocation["US-NY"]).toBeCloseTo(5000);
+    expect(result[0].totalIncomeByLocation["US-NY"]).toBeCloseTo(5000);
   });
 
   it("splits proportionally across two locations", () => {
@@ -35,7 +38,7 @@ describe("computeAllocations", () => {
           id: "G1",
           awardDate: pd("2024-01-01"),
           symbol: "XYZ",
-          vests: [{ date: pd("2024-07-01"), shares: 200 }],
+          vests: [{ date: pd("2024-07-01"), shares: 200, fmvPerShare: 30 }],
         },
       ],
       workIntervals: [
@@ -46,11 +49,13 @@ describe("computeAllocations", () => {
 
     const result = computeAllocations(input);
     const alloc = result[0].vestAllocations[0];
-    // 91 days NY (Jan 1 – Apr 1), 91 days CA (Apr 1 – Jul 1)
     expect(alloc.daysByLocation["US-NY"]).toBe(91);
     expect(alloc.daysByLocation["US-CA"]).toBe(91);
     expect(alloc.fractionByLocation["US-NY"]).toBeCloseTo(0.5);
     expect(alloc.fractionByLocation["US-CA"]).toBeCloseTo(0.5);
+    expect(alloc.income).toBe(6000);
+    expect(alloc.incomeByLocation["US-NY"]).toBeCloseTo(3000);
+    expect(alloc.incomeByLocation["US-CA"]).toBeCloseTo(3000);
   });
 
   it("only counts days within the grant-to-vest window", () => {
@@ -60,7 +65,7 @@ describe("computeAllocations", () => {
           id: "G1",
           awardDate: pd("2024-03-01"),
           symbol: "XYZ",
-          vests: [{ date: pd("2024-06-01"), shares: 50 }],
+          vests: [{ date: pd("2024-06-01"), shares: 50, fmvPerShare: 20 }],
         },
       ],
       workIntervals: [
@@ -71,9 +76,6 @@ describe("computeAllocations", () => {
 
     const result = computeAllocations(input);
     const alloc = result[0].vestAllocations[0];
-    // Grant 2024-03-01 to vest 2024-06-01
-    // NY: Mar 1 – Apr 1 = 31 days
-    // CA: Apr 1 – Jun 1 = 61 days
     expect(alloc.daysByLocation["US-NY"]).toBe(31);
     expect(alloc.daysByLocation["US-CA"]).toBe(61);
     expect(alloc.totalDays).toBe(92);
@@ -87,8 +89,8 @@ describe("computeAllocations", () => {
           awardDate: pd("2023-01-01"),
           symbol: "XYZ",
           vests: [
-            { date: pd("2023-07-01"), shares: 100 },
-            { date: pd("2024-01-01"), shares: 100 },
+            { date: pd("2023-07-01"), shares: 100, fmvPerShare: 10 },
+            { date: pd("2024-01-01"), shares: 100, fmvPerShare: 15 },
           ],
         },
       ],
@@ -108,13 +110,10 @@ describe("computeAllocations", () => {
           id: "G1",
           awardDate: pd("2024-01-01"),
           symbol: "XYZ",
-          vests: [{ date: pd("2024-07-01"), shares: 100 }],
+          vests: [{ date: pd("2024-07-01"), shares: 100, fmvPerShare: 40 }],
         },
       ],
-      workIntervals: [
-        // Only 10 days of NY declared out of 182 calendar days
-        { start: pd("2024-03-01"), end: pd("2024-03-11"), location: "US-NY" },
-      ],
+      workIntervals: [{ start: pd("2024-03-01"), end: pd("2024-03-11"), location: "US-NY" }],
     };
 
     const result = computeAllocations(input);
@@ -122,22 +121,23 @@ describe("computeAllocations", () => {
     expect(alloc.totalDays).toBe(182);
     expect(alloc.daysByLocation["US-NY"]).toBe(10);
     expect(alloc.fractionByLocation["US-NY"]).toBeCloseTo(10 / 182);
+    expect(alloc.incomeByLocation["US-NY"]).toBeCloseTo(4000 * (10 / 182));
   });
 
-  it("computes weighted average across multiple grants in same year", () => {
+  it("weights fractions by income, not share count", () => {
     const input: InputData = {
       grants: [
         {
           id: "G1",
           awardDate: pd("2024-01-01"),
           symbol: "XYZ",
-          vests: [{ date: pd("2024-07-01"), shares: 100 }],
+          vests: [{ date: pd("2024-07-01"), shares: 100, fmvPerShare: 10 }],
         },
         {
           id: "G2",
           awardDate: pd("2024-01-01"),
           symbol: "XYZ",
-          vests: [{ date: pd("2024-07-01"), shares: 300 }],
+          vests: [{ date: pd("2024-07-01"), shares: 100, fmvPerShare: 90 }],
         },
       ],
       workIntervals: [
@@ -149,6 +149,7 @@ describe("computeAllocations", () => {
     const result = computeAllocations(input);
     // Both grants have identical date ranges, so weighted average = simple average
     expect(result[0].weightedFractionByLocation["US-NY"]).toBeCloseTo(0.5);
-    expect(result[0].totalShares).toBe(400);
+    expect(result[0].totalIncome).toBe(10000);
+    expect(result[0].totalIncomeByLocation["US-NY"]).toBeCloseTo(5000);
   });
 });

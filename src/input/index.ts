@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import type { Brokerage, Grant, InputData, WorkInterval } from "../types.ts";
+import type { Brokerage, FileMap, InputData, WorkInterval } from "../types.ts";
 import { schwab } from "./brokerage/schwab.ts";
 import { parseInterval } from "./util/date.ts";
 
@@ -27,25 +27,19 @@ function parseWorkLocation(content: string): WorkInterval[] {
 }
 
 export function loadDirectory(dirPath: string): InputData {
-  const files = readdirSync(dirPath);
+  const dirEntries = readdirSync(dirPath);
+
+  const files: Map<string, string> = new Map();
   let workIntervals: WorkInterval[] | undefined;
-  const allGrants: Grant[] = [];
 
-  for (const file of files) {
-    const fullPath = join(dirPath, file);
-
-    if (file === "work-location.csv") {
-      const content = readFileSync(fullPath, "utf-8");
-      workIntervals = parseWorkLocation(content);
-      continue;
-    }
-
+  for (const name of dirEntries) {
+    const fullPath = join(dirPath, name);
     const content = readFileSync(fullPath, "utf-8");
-    for (const brokerage of brokerages) {
-      if (brokerage.canImport(file, content)) {
-        allGrants.push(...brokerage.import(file, content));
-        break;
-      }
+
+    if (name === "work-location.csv") {
+      workIntervals = parseWorkLocation(content);
+    } else {
+      files.set(name, content);
     }
   }
 
@@ -53,5 +47,12 @@ export function loadDirectory(dirPath: string): InputData {
     throw new Error("work-location.csv not found in data directory");
   }
 
-  return { grants: allGrants, workIntervals };
+  const fileMap: FileMap = files;
+  for (const brokerage of brokerages) {
+    if (brokerage.canImport(fileMap)) {
+      return { grants: brokerage.import(fileMap), workIntervals };
+    }
+  }
+
+  throw new Error("No brokerage recognized the files in the data directory");
 }

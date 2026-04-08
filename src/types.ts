@@ -3,6 +3,7 @@ import type { Temporal } from "temporal-polyfill";
 export interface Vest {
   date: Temporal.PlainDate;
   shares: number;
+  fmvPerShare: number;
 }
 
 export interface Grant {
@@ -23,26 +24,31 @@ export interface InputData {
   workIntervals: WorkInterval[];
 }
 
-export interface Brokerage {
-  canImport(filename: string, content: string): boolean;
-  import(filename: string, content: string): Grant[];
-}
+export type FileMap = ReadonlyMap<string, string>;
 
-// Engine output: a Vest enriched with the grant-to-vest day allocation by location.
+export interface Brokerage {
+  canImport(files: FileMap): boolean;
+  import(files: FileMap): Grant[];
+}
 
 export interface VestAllocation {
   grantId: string;
   vestDate: Temporal.PlainDate;
   shares: number;
+  fmvPerShare: number;
+  income: number;
   daysByLocation: Record<string, number>;
   totalDays: number;
   fractionByLocation: Record<string, number>;
+  incomeByLocation: Record<string, number>;
 }
 
 export interface TaxYearSummary {
   taxYear: number;
   vestAllocations: VestAllocation[];
-  /** Aggregated fraction across all vests, weighted by shares */
+  /** Weighted by income, not by share count. */
   weightedFractionByLocation: Record<string, number>;
   totalShares: number;
+  totalIncome: number;
+  totalIncomeByLocation: Record<string, number>;
 }

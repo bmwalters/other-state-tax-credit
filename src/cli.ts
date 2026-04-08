@@ -6,35 +6,44 @@ function formatPercent(n: number): string {
   return (n * 100).toFixed(2) + "%";
 }
 
+function formatDollar(n: number): string {
+  return "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 function printSummary(summaries: TaxYearSummary[]): void {
   for (const summary of summaries) {
+    const locations = Object.keys(summary.weightedFractionByLocation);
+
     console.log(`\n=== Tax Year ${summary.taxYear} ===`);
-    console.log(
-      `${"Grant".padEnd(10)} ${"Vest Date".padEnd(12)} ${"Shares".padStart(8)}  ${Object.keys(
-        summary.weightedFractionByLocation,
-      )
-        .map((l) => (l + " %").padStart(10))
-        .join("  ")}`,
-    );
-    console.log("-".repeat(40 + Object.keys(summary.weightedFractionByLocation).length * 12));
+
+    const header =
+      `${"Grant".padEnd(10)} ${"Vest Date".padEnd(12)} ${"Shares".padStart(8)} ${"FMV".padStart(10)} ${"Income".padStart(14)}  ` +
+      locations.map((l) => `${(l + " %").padStart(10)} ${(l + " $").padStart(14)}`).join("  ");
+    console.log(header);
+    console.log("-".repeat(header.length));
 
     for (const va of summary.vestAllocations) {
-      const locations = Object.keys(summary.weightedFractionByLocation);
-      const fracs = locations
-        .map((l) => formatPercent(va.fractionByLocation[l] ?? 0).padStart(10))
+      const locCols = locations
+        .map(
+          (l) =>
+            `${formatPercent(va.fractionByLocation[l] ?? 0).padStart(10)} ${formatDollar(va.incomeByLocation[l] ?? 0).padStart(14)}`,
+        )
         .join("  ");
       console.log(
-        `${va.grantId.padEnd(10)} ${va.vestDate.toString().padEnd(12)} ${String(va.shares).padStart(8)}  ${fracs}`,
+        `${va.grantId.padEnd(10)} ${va.vestDate.toString().padEnd(12)} ${String(va.shares).padStart(8)} ${formatDollar(va.fmvPerShare).padStart(10)} ${formatDollar(va.income).padStart(14)}  ${locCols}`,
       );
     }
 
-    const locations = Object.keys(summary.weightedFractionByLocation);
-    const summaryFracs = locations
-      .map((l) => formatPercent(summary.weightedFractionByLocation[l] ?? 0).padStart(10))
+    console.log("-".repeat(header.length));
+
+    const totalLocCols = locations
+      .map(
+        (l) =>
+          `${formatPercent(summary.weightedFractionByLocation[l] ?? 0).padStart(10)} ${formatDollar(summary.totalIncomeByLocation[l] ?? 0).padStart(14)}`,
+      )
       .join("  ");
-    console.log("-".repeat(40 + locations.length * 12));
     console.log(
-      `${"TOTAL".padEnd(10)} ${"".padEnd(12)} ${String(summary.totalShares).padStart(8)}  ${summaryFracs}`,
+      `${"TOTAL".padEnd(10)} ${"".padEnd(12)} ${String(summary.totalShares).padStart(8)} ${"".padStart(10)} ${formatDollar(summary.totalIncome).padStart(14)}  ${totalLocCols}`,
     );
   }
 }

@@ -1,5 +1,9 @@
 import { Temporal } from "temporal-polyfill";
 
+function isDuration(s: string) {
+  return /^[+-]?P/i.test(s);
+}
+
 /**
  * Parse an ISO 8601 interval string into a start/end PlainDate pair.
  *
@@ -7,8 +11,6 @@ import { Temporal } from "temporal-polyfill";
  *   - date/date       e.g. "2024-01-01/2024-07-01"
  *   - date/duration   e.g. "2024-01-01/P6M"
  *   - duration/date   e.g. "P6M/2024-07-01"
- *
- * Duration strings use ISO 8601 syntax.
  */
 export function parseInterval(interval: string): {
   start: Temporal.PlainDate;
@@ -23,8 +25,6 @@ export function parseInterval(interval: string): {
   if (!lhs || !rhs) {
     throw new Error(`malformed interval: ${interval}`);
   }
-
-  const isDuration = (s: string) => /^[+-]?P/i.test(s);
 
   if (isDuration(lhs) && isDuration(rhs)) {
     throw new Error(`malformed interval (both sides are durations): ${interval}`);
