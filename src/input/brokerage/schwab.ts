@@ -2,6 +2,7 @@ import { Temporal } from "temporal-polyfill";
 import type {
   Brokerage,
   BrokerageResult,
+  EsppDispositionType,
   EsppPurchase,
   EsppSale,
   FileMap,
@@ -75,6 +76,13 @@ function parseMdyDate(s: string): Temporal.PlainDate {
 
 function parseDollar(s: string): number {
   return Number(s.replace(/[$,]/g, ""));
+}
+
+function parseDispositionType(s: string | undefined): EsppDispositionType | undefined {
+  const value = s?.trim().toUpperCase();
+  if (!value) return undefined;
+  if (value === "QUALIFIED" || value === "DISQUALIFIED") return value;
+  throw new Error(`Unsupported ESPP disposition type: ${s}`);
 }
 
 function findAwardsFile(files: FileMap): string | undefined {
@@ -163,7 +171,15 @@ export const schwab: Brokerage = {
         if (tx.Action === "Deposit" && tx.Description === "ESPP") {
           if (tx.Quantity == null) continue;
           const detail = tx.TransactionDetails[0]?.Details as SchwabEsppDepositDetails | undefined;
-          if (!detail?.PurchaseDate || !detail.SubscriptionDate) continue;
+          if (
+            !detail?.PurchaseDate ||
+            !detail.SubscriptionDate ||
+            !detail.PurchasePrice ||
+            !detail.SubscriptionFairMarketValue ||
+            !detail.PurchaseFairMarketValue
+          ) {
+            continue;
+          }
 
           const id = esppPurchaseId(detail.SubscriptionDate, detail.PurchaseDate);
           if (!esppPurchaseMap.has(id)) {
@@ -171,6 +187,7 @@ export const schwab: Brokerage = {
               id,
               symbol: tx.Symbol,
               offeringStartDate: parseMdyDate(detail.SubscriptionDate),
+              fmvPerShareAtGrant: parseDollar(detail.SubscriptionFairMarketValue),
               purchaseDate: parseMdyDate(detail.PurchaseDate),
               purchasePricePerShare: parseDollar(detail.PurchasePrice),
               fmvPerShareAtPurchase: parseDollar(detail.PurchaseFairMarketValue),
@@ -184,6 +201,19 @@ export const schwab: Brokerage = {
         if (tx.Action === "Sale") {
           const detail = tx.TransactionDetails[0]?.Details as SchwabEsppSaleDetails | undefined;
           if (!detail || detail.Type !== "ESPP") continue;
+          const dispositionType = parseDispositionType(detail.DispositionType);
+          if (
+            !detail.SubscriptionDate ||
+            !detail.SubscriptionFairMarketValue ||
+            !detail.PurchaseDate ||
+            !detail.PurchasePrice ||
+            !detail.PurchaseFairMarketValue ||
+            !detail.SalePrice ||
+            !detail.Shares ||
+            !dispositionType
+          ) {
+            continue;
+          }
 
           const purchaseId = esppPurchaseId(detail.SubscriptionDate, detail.PurchaseDate);
 
@@ -193,6 +223,7 @@ export const schwab: Brokerage = {
               id: purchaseId,
               symbol: tx.Symbol,
               offeringStartDate: parseMdyDate(detail.SubscriptionDate),
+              fmvPerShareAtGrant: parseDollar(detail.SubscriptionFairMarketValue),
               purchaseDate: parseMdyDate(detail.PurchaseDate),
               purchasePricePerShare: parseDollar(detail.PurchasePrice),
               fmvPerShareAtPurchase: parseDollar(detail.PurchaseFairMarketValue),
@@ -205,6 +236,7 @@ export const schwab: Brokerage = {
             saleDate: parseMdyDate(tx.Date),
             salePricePerShare: parseDollar(detail.SalePrice),
             shares: Number(detail.Shares),
+            dispositionType,
           });
           continue;
         }

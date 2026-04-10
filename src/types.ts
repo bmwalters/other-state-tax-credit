@@ -36,6 +36,8 @@ export interface EsppPurchase {
   symbol: string;
   /** Start of the offering period (the "grant date" for allocation purposes). */
   offeringStartDate: Temporal.PlainDate;
+  /** Fair market value per share on the offering start / grant date. */
+  fmvPerShareAtGrant: number;
   /** Date shares were purchased (end of offering period). */
   purchaseDate: Temporal.PlainDate;
   /** Price per share the employee actually paid (discounted). */
@@ -46,12 +48,10 @@ export interface EsppPurchase {
   shares: number;
 }
 
+export type EsppDispositionType = "QUALIFIED" | "DISQUALIFIED";
+
 /**
  * A sale of ESPP shares. This is the taxable event.
- *
- * For a disqualifying disposition, the ordinary income component equals
- * (FMV at purchase − purchase price) × shares sold, which is then allocated
- * to jurisdictions based on the offering period.
  */
 export interface EsppSale {
   /** Which purchase lot these shares came from. */
@@ -59,6 +59,8 @@ export interface EsppSale {
   saleDate: Temporal.PlainDate;
   salePricePerShare: number;
   shares: number;
+  /** Schwab disposition label, preserved for auditability. */
+  dispositionType: EsppDispositionType;
 }
 
 /** Result of allocating a single ESPP sale across work locations. */
@@ -66,7 +68,14 @@ export interface EsppSaleAllocation {
   purchaseId: string;
   saleDate: Temporal.PlainDate;
   shares: number;
-  /** The ordinary income component: (FMV at purchase − purchase price) × shares. */
+  /** Schwab disposition label, preserved for auditability. */
+  dispositionType: EsppDispositionType;
+  /**
+   * The New York compensation component for a statutory-option/ESPP sale.
+   *
+   * QUALIFIED: lesser of actual gain and grant-date discount.
+   * DISQUALIFIED: lesser of actual gain and purchase-date discount.
+   */
   ordinaryIncome: number;
   /** Discount per share: FMV at purchase − purchase price. */
   discountPerShare: number;

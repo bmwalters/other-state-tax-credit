@@ -208,6 +208,7 @@ describe("computeAllocations – ESPP", () => {
           id: "ESPP1",
           symbol: "XYZ",
           offeringStartDate: pd("2024-01-01"),
+          fmvPerShareAtGrant: 50,
           purchaseDate: pd("2024-07-01"),
           purchasePricePerShare: 42.5, // 15% discount from $50
           fmvPerShareAtPurchase: 50,
@@ -220,6 +221,7 @@ describe("computeAllocations – ESPP", () => {
           saleDate: pd("2024-09-15"),
           salePricePerShare: 55,
           shares: 100,
+          dispositionType: "DISQUALIFIED",
         },
       ],
       workIntervals: [{ start: pd("2024-01-01"), end: pd("2024-12-31"), location: "US-NY" }],
@@ -232,6 +234,7 @@ describe("computeAllocations – ESPP", () => {
 
     const alloc = result[0].esppSaleAllocations[0];
     expect(alloc.purchaseId).toBe("ESPP1");
+    expect(alloc.dispositionType).toBe("DISQUALIFIED");
     expect(alloc.discountPerShare).toBeCloseTo(7.5); // 50 - 42.5
     expect(alloc.ordinaryIncome).toBeCloseTo(750); // 7.5 * 100
     expect(alloc.totalDays).toBe(131); // weekdays from Jan 1 to Jul 1, inclusive
@@ -250,6 +253,7 @@ describe("computeAllocations – ESPP", () => {
           id: "ESPP1",
           symbol: "XYZ",
           offeringStartDate: pd("2024-01-01"),
+          fmvPerShareAtGrant: 50,
           purchaseDate: pd("2024-07-01"),
           purchasePricePerShare: 42.5,
           fmvPerShareAtPurchase: 50,
@@ -262,6 +266,7 @@ describe("computeAllocations – ESPP", () => {
           saleDate: pd("2024-10-01"),
           salePricePerShare: 55,
           shares: 100,
+          dispositionType: "DISQUALIFIED",
         },
       ],
       workIntervals: [
@@ -288,6 +293,141 @@ describe("computeAllocations – ESPP", () => {
     expect(alloc.ordinaryIncomeByLocation["US-CA"]).toBeCloseTo(750 * caFrac);
   });
 
+  it("uses actual gain when a disqualifying sale is below purchase-date FMV", () => {
+    const input: InputData = {
+      grants: [],
+      esppPurchases: [
+        {
+          id: "ESPP1",
+          symbol: "XYZ",
+          offeringStartDate: pd("2024-01-01"),
+          fmvPerShareAtGrant: 50,
+          purchaseDate: pd("2024-07-01"),
+          purchasePricePerShare: 42.5,
+          fmvPerShareAtPurchase: 50,
+          shares: 100,
+        },
+      ],
+      esppSales: [
+        {
+          purchaseId: "ESPP1",
+          saleDate: pd("2024-10-01"),
+          salePricePerShare: 45,
+          shares: 100,
+          dispositionType: "DISQUALIFIED",
+        },
+      ],
+      workIntervals: [{ start: pd("2024-01-01"), end: pd("2024-12-31"), location: "US-NY" }],
+    };
+
+    const result = computeAllocations(input);
+    const alloc = result[0].esppSaleAllocations[0];
+    expect(alloc.discountPerShare).toBeCloseTo(7.5);
+    expect(alloc.ordinaryIncome).toBeCloseTo(250); // (45 - 42.5) * 100
+    expect(alloc.ordinaryIncomeByLocation["US-NY"]).toBeCloseTo(250);
+  });
+
+  it("treats disqualifying ESPP loss sales as zero ordinary income", () => {
+    const input: InputData = {
+      grants: [],
+      esppPurchases: [
+        {
+          id: "ESPP1",
+          symbol: "XYZ",
+          offeringStartDate: pd("2024-01-01"),
+          fmvPerShareAtGrant: 50,
+          purchaseDate: pd("2024-07-01"),
+          purchasePricePerShare: 42.5,
+          fmvPerShareAtPurchase: 50,
+          shares: 100,
+        },
+      ],
+      esppSales: [
+        {
+          purchaseId: "ESPP1",
+          saleDate: pd("2024-10-01"),
+          salePricePerShare: 40,
+          shares: 100,
+          dispositionType: "DISQUALIFIED",
+        },
+      ],
+      workIntervals: [{ start: pd("2024-01-01"), end: pd("2024-12-31"), location: "US-NY" }],
+    };
+
+    const result = computeAllocations(input);
+    const alloc = result[0].esppSaleAllocations[0];
+    expect(alloc.discountPerShare).toBeCloseTo(7.5);
+    expect(alloc.ordinaryIncome).toBeCloseTo(0);
+    expect(alloc.ordinaryIncomeByLocation["US-NY"]).toBeCloseTo(0);
+  });
+
+  it("uses the qualified-disposition grant-date discount cap", () => {
+    const input: InputData = {
+      grants: [],
+      esppPurchases: [
+        {
+          id: "ESPP1",
+          symbol: "XYZ",
+          offeringStartDate: pd("2022-12-01"),
+          fmvPerShareAtGrant: 14.41,
+          purchaseDate: pd("2023-05-31"),
+          purchasePricePerShare: 12.2485,
+          fmvPerShareAtPurchase: 14.86,
+          shares: 340,
+        },
+      ],
+      esppSales: [
+        {
+          purchaseId: "ESPP1",
+          saleDate: pd("2025-06-02"),
+          salePricePerShare: 52.79,
+          shares: 340,
+          dispositionType: "QUALIFIED",
+        },
+      ],
+      workIntervals: [{ start: pd("2022-12-01"), end: pd("2025-12-31"), location: "US-NY" }],
+    };
+
+    const result = computeAllocations(input);
+    const alloc = result[0].esppSaleAllocations[0];
+    expect(alloc.dispositionType).toBe("QUALIFIED");
+    expect(alloc.discountPerShare).toBeCloseTo(14.86 - 12.2485);
+    expect(alloc.ordinaryIncome).toBeCloseTo(734.91); // min(actual gain, grant-date discount)
+    expect(alloc.ordinaryIncomeByLocation["US-NY"]).toBeCloseTo(734.91);
+  });
+
+  it("caps qualified-disposition ordinary income at actual gain", () => {
+    const input: InputData = {
+      grants: [],
+      esppPurchases: [
+        {
+          id: "ESPP1",
+          symbol: "XYZ",
+          offeringStartDate: pd("2022-12-01"),
+          fmvPerShareAtGrant: 20,
+          purchaseDate: pd("2023-05-31"),
+          purchasePricePerShare: 10,
+          fmvPerShareAtPurchase: 25,
+          shares: 10,
+        },
+      ],
+      esppSales: [
+        {
+          purchaseId: "ESPP1",
+          saleDate: pd("2025-06-02"),
+          salePricePerShare: 13,
+          shares: 10,
+          dispositionType: "QUALIFIED",
+        },
+      ],
+      workIntervals: [{ start: pd("2022-12-01"), end: pd("2025-12-31"), location: "US-NY" }],
+    };
+
+    const result = computeAllocations(input);
+    const alloc = result[0].esppSaleAllocations[0];
+    expect(alloc.ordinaryIncome).toBeCloseTo(30); // actual gain = (13 - 10) * 10
+  });
+
   it("groups ESPP sales by the sale year (not purchase year)", () => {
     // Purchase in 2024, sell in 2025
     const input: InputData = {
@@ -297,6 +437,7 @@ describe("computeAllocations – ESPP", () => {
           id: "ESPP1",
           symbol: "XYZ",
           offeringStartDate: pd("2024-01-01"),
+          fmvPerShareAtGrant: 50,
           purchaseDate: pd("2024-07-01"),
           purchasePricePerShare: 42.5,
           fmvPerShareAtPurchase: 50,
@@ -309,6 +450,7 @@ describe("computeAllocations – ESPP", () => {
           saleDate: pd("2025-03-01"),
           salePricePerShare: 60,
           shares: 200,
+          dispositionType: "DISQUALIFIED",
         },
       ],
       workIntervals: [{ start: pd("2024-01-01"), end: pd("2025-12-31"), location: "US-NY" }],
@@ -329,6 +471,7 @@ describe("computeAllocations – ESPP", () => {
           id: "ESPP1",
           symbol: "XYZ",
           offeringStartDate: pd("2024-01-01"),
+          fmvPerShareAtGrant: 50,
           purchaseDate: pd("2024-07-01"),
           purchasePricePerShare: 42.5,
           fmvPerShareAtPurchase: 50,
@@ -341,12 +484,14 @@ describe("computeAllocations – ESPP", () => {
           saleDate: pd("2024-09-01"),
           salePricePerShare: 55,
           shares: 50,
+          dispositionType: "DISQUALIFIED",
         },
         {
           purchaseId: "ESPP1",
           saleDate: pd("2025-02-01"),
           salePricePerShare: 60,
           shares: 150,
+          dispositionType: "DISQUALIFIED",
         },
       ],
       workIntervals: [{ start: pd("2024-01-01"), end: pd("2025-12-31"), location: "US-NY" }],
@@ -374,6 +519,7 @@ describe("computeAllocations – ESPP", () => {
           saleDate: pd("2024-09-01"),
           salePricePerShare: 55,
           shares: 50,
+          dispositionType: "DISQUALIFIED",
         },
       ],
       workIntervals: [{ start: pd("2024-01-01"), end: pd("2024-12-31"), location: "US-NY" }],
@@ -397,6 +543,7 @@ describe("computeAllocations – ESPP", () => {
           id: "ESPP1",
           symbol: "XYZ",
           offeringStartDate: pd("2024-01-01"),
+          fmvPerShareAtGrant: 50,
           purchaseDate: pd("2024-07-01"),
           purchasePricePerShare: 42.5,
           fmvPerShareAtPurchase: 50,
@@ -409,6 +556,7 @@ describe("computeAllocations – ESPP", () => {
           saleDate: pd("2024-09-01"),
           salePricePerShare: 55,
           shares: 100,
+          dispositionType: "DISQUALIFIED",
         },
       ],
       workIntervals: [{ start: pd("2024-01-01"), end: pd("2024-12-31"), location: "US-NY" }],
@@ -438,6 +586,7 @@ describe("computeAllocations – ESPP", () => {
           id: "ESPP1",
           symbol: "XYZ",
           offeringStartDate: pd("2023-01-01"),
+          fmvPerShareAtGrant: 50,
           purchaseDate: pd("2023-07-01"),
           purchasePricePerShare: 40,
           fmvPerShareAtPurchase: 50,
@@ -450,6 +599,7 @@ describe("computeAllocations – ESPP", () => {
           saleDate: pd("2025-12-15"),
           salePricePerShare: 80,
           shares: 100,
+          dispositionType: "QUALIFIED",
         },
       ],
       workIntervals: [
@@ -466,7 +616,7 @@ describe("computeAllocations – ESPP", () => {
     // Offering period Jan 1 – Jul 1, 2023 = entirely in NY
     expect(alloc.fractionByLocation["US-NY"]).toBeCloseTo(1.0);
     expect(alloc.fractionByLocation["US-CA"]).toBeUndefined();
-    expect(alloc.ordinaryIncome).toBeCloseTo(1000); // (50-40) * 100
+    expect(alloc.ordinaryIncome).toBeCloseTo(1000); // grant-date discount = (50-40) * 100
     expect(alloc.ordinaryIncomeByLocation["US-NY"]).toBeCloseTo(1000);
   });
 
@@ -478,6 +628,7 @@ describe("computeAllocations – ESPP", () => {
           id: "ESPP1",
           symbol: "XYZ",
           offeringStartDate: pd("2024-06-01"),
+          fmvPerShareAtGrant: 45,
           purchaseDate: pd("2024-12-01"),
           purchasePricePerShare: 38,
           fmvPerShareAtPurchase: 45,
@@ -490,6 +641,7 @@ describe("computeAllocations – ESPP", () => {
           saleDate: pd("2024-12-15"),
           salePricePerShare: 48,
           shares: 50,
+          dispositionType: "DISQUALIFIED",
         },
       ],
       workIntervals: [

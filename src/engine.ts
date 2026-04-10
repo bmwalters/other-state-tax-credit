@@ -54,7 +54,35 @@ function allocateVest(
  * The allocation period is the offering period (offering start → purchase date),
  * NOT the period up to the sale date. The taxable event occurs on the sale date
  * and falls into that sale's tax year.
+ *
+ * The ordinary-income formula depends on the provided disposition type:
+ * - QUALIFIED: lesser of actual gain and grant-date discount
+ * - DISQUALIFIED: lesser of actual gain and purchase-date discount
  */
+function computeEsppOrdinaryIncome(purchase: EsppPurchase, sale: EsppSale): number {
+  const actualGainPerShare = Math.max(0, sale.salePricePerShare - purchase.purchasePricePerShare);
+  const grantDateDiscountPerShare = Math.max(
+    0,
+    purchase.fmvPerShareAtGrant - purchase.purchasePricePerShare,
+  );
+  const purchaseDateDiscountPerShare = Math.max(
+    0,
+    purchase.fmvPerShareAtPurchase - purchase.purchasePricePerShare,
+  );
+
+  let compensationPerShare: number;
+  switch (sale.dispositionType) {
+    case "QUALIFIED":
+      compensationPerShare = Math.min(actualGainPerShare, grantDateDiscountPerShare);
+      break;
+    case "DISQUALIFIED":
+      compensationPerShare = Math.min(actualGainPerShare, purchaseDateDiscountPerShare);
+      break;
+  }
+
+  return compensationPerShare * sale.shares;
+}
+
 function allocateEsppSale(
   purchase: EsppPurchase,
   sale: EsppSale,
@@ -69,7 +97,7 @@ function allocateEsppSale(
   );
 
   const discountPerShare = purchase.fmvPerShareAtPurchase - purchase.purchasePricePerShare;
-  const ordinaryIncome = discountPerShare * sale.shares;
+  const ordinaryIncome = computeEsppOrdinaryIncome(purchase, sale);
 
   const fractionByLocation: Record<string, number> = {};
   const ordinaryIncomeByLocation: Record<string, number> = {};
@@ -80,13 +108,14 @@ function allocateEsppSale(
     ordinaryIncomeByLocation[loc] = ordinaryIncome * frac;
   }
 
-  return {
-    purchaseId: purchase.id,
-    saleDate: sale.saleDate,
-    shares: sale.shares,
-    ordinaryIncome,
-    discountPerShare,
-    daysByLocation,
+    return {
+      purchaseId: purchase.id,
+      saleDate: sale.saleDate,
+      shares: sale.shares,
+      dispositionType: sale.dispositionType,
+      ordinaryIncome,
+      discountPerShare,
+      daysByLocation,
     totalDays: totalWorkingDays,
     fractionByLocation,
     ordinaryIncomeByLocation,

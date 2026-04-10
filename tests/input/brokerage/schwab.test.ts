@@ -198,6 +198,7 @@ describe("import – ESPP", () => {
     expect(p.id).toBe("ESPP-06/01/2024-11/30/2024");
     expect(p.symbol).toBe("XYZ");
     expect(p.offeringStartDate.equals(Temporal.PlainDate.from("2024-06-01"))).toBe(true);
+    expect(p.fmvPerShareAtGrant).toBe(29.27);
     expect(p.purchaseDate.equals(Temporal.PlainDate.from("2024-11-30"))).toBe(true);
     expect(p.purchasePricePerShare).toBe(24.88);
     expect(p.fmvPerShareAtPurchase).toBe(70.01);
@@ -217,6 +218,49 @@ describe("import – ESPP", () => {
     expect(s.saleDate.equals(Temporal.PlainDate.from("2024-12-03"))).toBe(true);
     expect(s.salePricePerShare).toBe(70.4);
     expect(s.shares).toBe(389);
+    expect(s.dispositionType).toBe("DISQUALIFIED");
+  });
+
+  it("preserves qualified and disqualified disposition labels", () => {
+    const mixedEsppTransactions = {
+      Transactions: [
+        {
+          Date: "06/02/2025",
+          Action: "Sale",
+          Symbol: "XYZ",
+          Quantity: "340",
+          Description: "Share Sale",
+          TransactionDetails: [
+            {
+              Details: {
+                Type: "ESPP",
+                Shares: "340",
+                SalePrice: "$52.79",
+                SubscriptionDate: "12/01/2022",
+                SubscriptionFairMarketValue: "$14.41",
+                PurchaseDate: "05/31/2023",
+                PurchasePrice: "$12.2485",
+                PurchaseFairMarketValue: "$14.86",
+                DispositionType: "QUALIFIED",
+              },
+            },
+          ],
+        },
+        esppTransactions.Transactions[1],
+      ],
+    };
+
+    const files = makeFiles({
+      "Awards.json": awardsJson,
+      "Transactions.json": mixedEsppTransactions,
+    });
+    const result = schwab.import(files);
+
+    expect(result.esppSales).toHaveLength(2);
+    expect(result.esppSales!.map((sale) => sale.dispositionType)).toEqual([
+      "DISQUALIFIED",
+      "QUALIFIED",
+    ]);
   });
 
   it("does not confuse ESPP transactions with RSU lapses", () => {

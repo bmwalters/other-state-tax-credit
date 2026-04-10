@@ -12,6 +12,7 @@ This program reads your RSU grant and vest data as well as your declared New Yor
   In particular, remote days worked outside New York for your own convenience
   may still need to be entered as `US-NY` under the convenience-of-the-employer rule.
 - Normal work days spent at home may need to be entered as `US-NY` if your assigned office is in New York.
+- Limitation: weekend work (for example, Sunday travel or Saturday meetings) is not yet modeled; weekends are always excluded.
 - Schwab import: the CSV export is missing data; use API JSON instead.
 
 ## Usage
