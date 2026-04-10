@@ -16,25 +16,56 @@ function printSummary(summaries: TaxYearSummary[]): void {
 
     console.log(`\n=== Tax Year ${summary.taxYear} ===`);
 
-    const header =
-      `${"Grant".padEnd(10)} ${"Vest Date".padEnd(12)} ${"Shares".padStart(8)} ${"FMV".padStart(10)} ${"Income".padStart(14)}  ` +
-      locations.map((l) => `${(l + " %").padStart(10)} ${(l + " $").padStart(14)}`).join("  ");
-    console.log(header);
-    console.log("-".repeat(header.length));
+    // ── RSU vest allocations ──
+    if (summary.vestAllocations.length > 0) {
+      console.log("\n--- RSU Vests ---");
+      const header =
+        `${"Grant".padEnd(10)} ${"Vest Date".padEnd(12)} ${"Shares".padStart(8)} ${"FMV".padStart(10)} ${"Income".padStart(14)}  ` +
+        locations.map((l) => `${(l + " %").padStart(10)} ${(l + " $").padStart(14)}`).join("  ");
+      console.log(header);
+      console.log("-".repeat(header.length));
 
-    for (const va of summary.vestAllocations) {
-      const locCols = locations
-        .map(
-          (l) =>
-            `${formatPercent(va.fractionByLocation[l] ?? 0).padStart(10)} ${formatDollar(va.incomeByLocation[l] ?? 0).padStart(14)}`,
-        )
-        .join("  ");
-      console.log(
-        `${va.grantId.padEnd(10)} ${va.vestDate.toString().padEnd(12)} ${String(va.shares).padStart(8)} ${formatDollar(va.fmvPerShare).padStart(10)} ${formatDollar(va.income).padStart(14)}  ${locCols}`,
-      );
+      for (const va of summary.vestAllocations) {
+        const locCols = locations
+          .map(
+            (l) =>
+              `${formatPercent(va.fractionByLocation[l] ?? 0).padStart(10)} ${formatDollar(va.incomeByLocation[l] ?? 0).padStart(14)}`,
+          )
+          .join("  ");
+        console.log(
+          `${va.grantId.padEnd(10)} ${va.vestDate.toString().padEnd(12)} ${String(va.shares).padStart(8)} ${formatDollar(va.fmvPerShare).padStart(10)} ${formatDollar(va.income).padStart(14)}  ${locCols}`,
+        );
+      }
     }
 
-    console.log("-".repeat(header.length));
+    // ── ESPP sale allocations ──
+    if (summary.esppSaleAllocations.length > 0) {
+      console.log("\n--- ESPP Sales (Ordinary Income) ---");
+      const esppHeader =
+        `${"Purchase".padEnd(34)} ${"Sale Date".padEnd(12)} ${"Shares".padStart(8)} ${"Discount".padStart(10)} ${"Ord Income".padStart(14)}  ` +
+        locations.map((l) => `${(l + " %").padStart(10)} ${(l + " $").padStart(14)}`).join("  ");
+      console.log(esppHeader);
+      console.log("-".repeat(esppHeader.length));
+
+      for (const ea of summary.esppSaleAllocations) {
+        const locCols = locations
+          .map(
+            (l) =>
+              `${formatPercent(ea.fractionByLocation[l] ?? 0).padStart(10)} ${formatDollar(ea.ordinaryIncomeByLocation[l] ?? 0).padStart(14)}`,
+          )
+          .join("  ");
+        console.log(
+          `${ea.purchaseId.padEnd(34)} ${ea.saleDate.toString().padEnd(12)} ${String(ea.shares).padStart(8)} ${formatDollar(ea.discountPerShare).padStart(10)} ${formatDollar(ea.ordinaryIncome).padStart(14)}  ${locCols}`,
+        );
+      }
+    }
+
+    // ── Totals ──
+    console.log("");
+    const divider =
+      `${"".padEnd(10)} ${"".padEnd(12)} ${"".padStart(8)} ${"".padStart(10)} ${"".padStart(14)}  ` +
+      locations.map((_l) => `${"".padStart(10)} ${"".padStart(14)}`).join("  ");
+    console.log("-".repeat(divider.length));
 
     const totalLocCols = locations
       .map(

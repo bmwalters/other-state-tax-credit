@@ -50,7 +50,13 @@ export function loadDirectory(dirPath: string): InputData {
   const fileMap: FileMap = files;
   for (const brokerage of brokerages) {
     if (brokerage.canImport(fileMap)) {
-      return { grants: brokerage.import(fileMap), workIntervals };
+      const result = brokerage.import(fileMap);
+      return {
+        grants: result.grants,
+        esppPurchases: result.esppPurchases,
+        esppSales: result.esppSales,
+        workIntervals,
+      };
     }
   }
 
