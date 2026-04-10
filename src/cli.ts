@@ -79,12 +79,25 @@ function printSummary(summaries: TaxYearSummary[]): void {
   }
 }
 
+function printWarnings(): void {
+  console.log("NOTE: This tool assumes your work-location.csv already reflects NY's rules:");
+  console.log('  - "Convenience of the employer" test (20 NYCRR §132.18(a)):');
+  console.log("    Days working remotely outside NY for your own convenience (not employer");
+  console.log("    necessity) must be reported as NY days.");
+  console.log("  - Work-from-home default (IT-203-F line 15):");
+  console.log("    Normal work days spent at home are NY days if your office is in NY.");
+  console.log("  - Weekday gaps in work-location.csv are treated as non-NY days.");
+  console.log("    Overlapping work-location intervals are still errors.");
+  console.log("");
+}
+
 const dirPath = process.argv[2];
 if (!dirPath) {
   console.error("usage: node cli.ts <data-directory>");
   process.exit(1);
 }
 
+printWarnings();
 const input = loadDirectory(dirPath);
 const summaries = computeAllocations(input);
 printSummary(summaries);

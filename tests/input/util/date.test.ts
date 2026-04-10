@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 import { parseInterval } from "../../../src/input/util/date.ts";
 
 describe("parseInterval", () => {
+  it("parses single-date intervals", () => {
+    const { start, end } = parseInterval("2024-01-01");
+    expect(start.toString()).toBe("2024-01-01");
+    expect(end.toString()).toBe("2024-01-01");
+  });
+
   it("parses date/date intervals", () => {
     const { start, end } = parseInterval("2024-01-01/2024-07-01");
     expect(start.toString()).toBe("2024-01-01");
@@ -44,8 +50,8 @@ describe("parseInterval", () => {
     expect(end.toString()).toBe("2025-07-01");
   });
 
-  it("throws on missing slash", () => {
-    expect(() => parseInterval("2024-01-01")).toThrow('missing "/"');
+  it("throws on malformed single-date values", () => {
+    expect(() => parseInterval("not-a-date")).toThrow();
   });
 
   it("throws on empty sides", () => {

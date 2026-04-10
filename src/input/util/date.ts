@@ -7,7 +7,8 @@ function isDuration(s: string) {
 /**
  * Parse an ISO 8601 interval string into a start/end PlainDate pair.
  *
- * Supports three forms:
+ * Supports four forms:
+ *   - date            e.g. "2024-01-01"          (single-day interval)
  *   - date/date       e.g. "2024-01-01/2024-07-01"
  *   - date/duration   e.g. "2024-01-01/P6M"
  *   - duration/date   e.g. "P6M/2024-07-01"
@@ -18,7 +19,9 @@ export function parseInterval(interval: string): {
 } {
   const slash = interval.indexOf("/");
   if (slash === -1) {
-    throw new Error(`malformed interval (missing "/"): ${interval}`);
+    // Single-date interval: start === end
+    const date = Temporal.PlainDate.from(interval);
+    return { start: date, end: date };
   }
   const lhs = interval.slice(0, slash);
   const rhs = interval.slice(slash + 1);

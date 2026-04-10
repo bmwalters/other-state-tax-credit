@@ -1,51 +1,36 @@
-import { Temporal } from "temporal-polyfill";
 import type {
   EsppPurchase,
   EsppSale,
   EsppSaleAllocation,
   Grant,
   InputData,
+  NonWorkingInterval,
   TaxYearSummary,
   VestAllocation,
   Vest,
   WorkInterval,
 } from "./types.ts";
+import { countWorkingDaysByLocation } from "./workdays.ts";
 
-/**
- * NY's allocation formula: fraction of workdays between grant and vest
- * that were spent in NY. We approximate with calendar days rather than
- * actual business days.
- */
-function countDaysByLocation(
-  start: Temporal.PlainDate,
-  end: Temporal.PlainDate,
+function allocateVest(
+  grant: Grant,
+  vest: Vest,
   workIntervals: WorkInterval[],
-): Record<string, number> {
-  const counts: Record<string, number> = {};
-
-  for (const wi of workIntervals) {
-    const overlapStart = Temporal.PlainDate.compare(wi.start, start) > 0 ? wi.start : start;
-    const overlapEnd = Temporal.PlainDate.compare(wi.end, end) < 0 ? wi.end : end;
-
-    const days = overlapStart.until(overlapEnd).total("day");
-    if (days <= 0) continue;
-
-    counts[wi.location] = (counts[wi.location] ?? 0) + days;
-  }
-
-  return counts;
-}
-
-function allocateVest(grant: Grant, vest: Vest, workIntervals: WorkInterval[]): VestAllocation {
-  const daysByLocation = countDaysByLocation(grant.awardDate, vest.date, workIntervals);
-  const totalDays = grant.awardDate.until(vest.date).total("day");
+  nonWorkingIntervals: NonWorkingInterval[],
+): VestAllocation {
+  const { daysByLocation, totalWorkingDays } = countWorkingDaysByLocation(
+    grant.awardDate,
+    vest.date,
+    workIntervals,
+    nonWorkingIntervals,
+  );
 
   const fractionByLocation: Record<string, number> = {};
   const incomeByLocation: Record<string, number> = {};
   const income = vest.shares * vest.fmvPerShare;
 
   for (const [loc, days] of Object.entries(daysByLocation)) {
-    const frac = totalDays > 0 ? days / totalDays : 0;
+    const frac = totalWorkingDays > 0 ? days / totalWorkingDays : 0;
     fractionByLocation[loc] = frac;
     incomeByLocation[loc] = income * frac;
   }
@@ -57,7 +42,7 @@ function allocateVest(grant: Grant, vest: Vest, workIntervals: WorkInterval[]): 
     fmvPerShare: vest.fmvPerShare,
     income,
     daysByLocation,
-    totalDays,
+    totalDays: totalWorkingDays,
     fractionByLocation,
     incomeByLocation,
   };
@@ -74,13 +59,14 @@ function allocateEsppSale(
   purchase: EsppPurchase,
   sale: EsppSale,
   workIntervals: WorkInterval[],
+  nonWorkingIntervals: NonWorkingInterval[],
 ): EsppSaleAllocation {
-  const daysByLocation = countDaysByLocation(
+  const { daysByLocation, totalWorkingDays } = countWorkingDaysByLocation(
     purchase.offeringStartDate,
     purchase.purchaseDate,
     workIntervals,
+    nonWorkingIntervals,
   );
-  const totalDays = purchase.offeringStartDate.until(purchase.purchaseDate).total("day");
 
   const discountPerShare = purchase.fmvPerShareAtPurchase - purchase.purchasePricePerShare;
   const ordinaryIncome = discountPerShare * sale.shares;
@@ -89,7 +75,7 @@ function allocateEsppSale(
   const ordinaryIncomeByLocation: Record<string, number> = {};
 
   for (const [loc, days] of Object.entries(daysByLocation)) {
-    const frac = totalDays > 0 ? days / totalDays : 0;
+    const frac = totalWorkingDays > 0 ? days / totalWorkingDays : 0;
     fractionByLocation[loc] = frac;
     ordinaryIncomeByLocation[loc] = ordinaryIncome * frac;
   }
@@ -101,7 +87,7 @@ function allocateEsppSale(
     ordinaryIncome,
     discountPerShare,
     daysByLocation,
-    totalDays,
+    totalDays: totalWorkingDays,
     fractionByLocation,
     ordinaryIncomeByLocation,
   };
@@ -120,10 +106,12 @@ export function computeAllocations(input: InputData): TaxYearSummary[] {
     return byYear.get(year)!;
   }
 
+  const nonWorking = input.nonWorkingIntervals ?? [];
+
   // ── RSU vests ──
   for (const grant of input.grants) {
     for (const vest of grant.vests) {
-      const alloc = allocateVest(grant, vest, input.workIntervals);
+      const alloc = allocateVest(grant, vest, input.workIntervals, nonWorking);
       bucket(vest.date.year).vestAllocations.push(alloc);
     }
   }
@@ -141,7 +129,7 @@ export function computeAllocations(input: InputData): TaxYearSummary[] {
         `ESPP sale references unknown purchase "${sale.purchaseId}" — not found in esppPurchases`,
       );
     }
-    const alloc = allocateEsppSale(purchase, sale, input.workIntervals);
+    const alloc = allocateEsppSale(purchase, sale, input.workIntervals, nonWorking);
     bucket(sale.saleDate.year).esppSaleAllocations.push(alloc);
   }
 

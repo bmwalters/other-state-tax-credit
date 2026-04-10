@@ -8,7 +8,10 @@ This program reads your RSU grant and vest data as well as your declared New Yor
 
 ## Limitations
 
-- Assumes proportionality of workdays across NY days and non-NY days.
+- You must encode New York's legal sourcing rules into `work-location.csv` yourself.
+  In particular, remote days worked outside New York for your own convenience
+  may still need to be entered as `US-NY` under the convenience-of-the-employer rule.
+- Normal work days spent at home may need to be entered as `US-NY` if your assigned office is in New York.
 - Schwab import: the CSV export is missing data; use API JSON instead.
 
 ## Usage
@@ -25,7 +28,23 @@ This program reads your RSU grant and vest data as well as your declared New Yor
    2024-08-01/2024-12-15,US-NY
    ```
 
-   - `interval` is an [ISO 8601 Time Interval](https://en.wikipedia.org/wiki/ISO_8601#Time_intervals)
+   - `interval` is an [ISO 8601 Time Interval](https://en.wikipedia.org/wiki/ISO_8601#Time_intervals) (closed interval)
    - `location` is an [ISO 3166-2](https://en.wikipedia.org/wiki/ISO_3166-2:US) subdivision
+
+1. Optionally populate `holidays.csv` to exclude non-working weekdays from both the numerator and denominator:
+
+   ```csv
+   interval,category
+   2025-01-01,holiday
+   2025-02-14,vacation
+   2025-07-03/2025-07-04,holiday
+   ```
+
+   - `interval` may be either a single date (for one day off) or a closed date interval
+   - `category` is a free-form label such as `holiday`, `vacation`, `sick`, or `leave`
+   - Weekends are always excluded automatically; `holidays.csv` is for non-working weekdays
+
+1. Any working weekday not covered by `work-location.csv` is treated as non-NY.
+   Overlapping work-location intervals are treated as errors.
 
 1. `npm run dev -- /path/to/data/`

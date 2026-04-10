@@ -43,20 +43,20 @@ describe("computeAllocations – RSU", () => {
         },
       ],
       workIntervals: [
-        { start: pd("2024-01-01"), end: pd("2024-04-01"), location: "US-NY" },
+        { start: pd("2024-01-01"), end: pd("2024-03-31"), location: "US-NY" },
         { start: pd("2024-04-01"), end: pd("2024-12-31"), location: "US-CA" },
       ],
     };
 
     const result = computeAllocations(input);
     const alloc = result[0].vestAllocations[0];
-    expect(alloc.daysByLocation["US-NY"]).toBe(91);
-    expect(alloc.daysByLocation["US-CA"]).toBe(91);
-    expect(alloc.fractionByLocation["US-NY"]).toBeCloseTo(0.5);
-    expect(alloc.fractionByLocation["US-CA"]).toBeCloseTo(0.5);
+    expect(alloc.daysByLocation["US-NY"]).toBe(65);
+    expect(alloc.daysByLocation["US-CA"]).toBe(66);
+    expect(alloc.fractionByLocation["US-NY"]).toBeCloseTo(65 / 131);
+    expect(alloc.fractionByLocation["US-CA"]).toBeCloseTo(66 / 131);
     expect(alloc.income).toBe(6000);
-    expect(alloc.incomeByLocation["US-NY"]).toBeCloseTo(3000);
-    expect(alloc.incomeByLocation["US-CA"]).toBeCloseTo(3000);
+    expect(alloc.incomeByLocation["US-NY"]).toBeCloseTo(6000 * (65 / 131));
+    expect(alloc.incomeByLocation["US-CA"]).toBeCloseTo(6000 * (66 / 131));
   });
 
   it("only counts days within the grant-to-vest window", () => {
@@ -70,16 +70,16 @@ describe("computeAllocations – RSU", () => {
         },
       ],
       workIntervals: [
-        { start: pd("2024-01-01"), end: pd("2024-04-01"), location: "US-NY" },
+        { start: pd("2024-01-01"), end: pd("2024-03-31"), location: "US-NY" },
         { start: pd("2024-04-01"), end: pd("2024-09-01"), location: "US-CA" },
       ],
     };
 
     const result = computeAllocations(input);
     const alloc = result[0].vestAllocations[0];
-    expect(alloc.daysByLocation["US-NY"]).toBe(31);
-    expect(alloc.daysByLocation["US-CA"]).toBe(61);
-    expect(alloc.totalDays).toBe(92);
+    expect(alloc.daysByLocation["US-NY"]).toBe(21);
+    expect(alloc.daysByLocation["US-CA"]).toBe(45);
+    expect(alloc.totalDays).toBe(66);
   });
 
   it("groups vests by tax year", () => {
@@ -104,7 +104,7 @@ describe("computeAllocations – RSU", () => {
     expect(result[1].taxYear).toBe(2024);
   });
 
-  it("uses total calendar days as denominator, not just declared days", () => {
+  it("excludes listed non-working days from the denominator", () => {
     const input: InputData = {
       grants: [
         {
@@ -114,15 +114,58 @@ describe("computeAllocations – RSU", () => {
           vests: [{ date: pd("2024-07-01"), shares: 100, fmvPerShare: 40 }],
         },
       ],
-      workIntervals: [{ start: pd("2024-03-01"), end: pd("2024-03-11"), location: "US-NY" }],
+      workIntervals: [{ start: pd("2024-01-01"), end: pd("2024-12-31"), location: "US-NY" }],
+      nonWorkingIntervals: [
+        { start: pd("2024-01-01"), end: pd("2024-01-01"), category: "holiday" },
+        { start: pd("2024-05-27"), end: pd("2024-05-27"), category: "holiday" },
+      ],
     };
 
     const result = computeAllocations(input);
     const alloc = result[0].vestAllocations[0];
-    expect(alloc.totalDays).toBe(182);
-    expect(alloc.daysByLocation["US-NY"]).toBe(10);
-    expect(alloc.fractionByLocation["US-NY"]).toBeCloseTo(10 / 182);
-    expect(alloc.incomeByLocation["US-NY"]).toBeCloseTo(4000 * (10 / 182));
+    expect(alloc.totalDays).toBe(129);
+    expect(alloc.daysByLocation["US-NY"]).toBe(129);
+    expect(alloc.fractionByLocation["US-NY"]).toBeCloseTo(1);
+    expect(alloc.incomeByLocation["US-NY"]).toBeCloseTo(4000);
+  });
+
+  it("treats uncovered weekdays as non-NY", () => {
+    const input: InputData = {
+      grants: [
+        {
+          id: "G1",
+          awardDate: pd("2024-01-01"),
+          symbol: "XYZ",
+          vests: [{ date: pd("2024-01-10"), shares: 100, fmvPerShare: 40 }],
+        },
+      ],
+      workIntervals: [{ start: pd("2024-01-01"), end: pd("2024-01-03"), location: "US-NY" }],
+    };
+
+    const result = computeAllocations(input);
+    const alloc = result[0].vestAllocations[0];
+    expect(alloc.totalDays).toBe(8);
+    expect(alloc.daysByLocation["US-NY"]).toBe(3);
+    expect(alloc.fractionByLocation["US-NY"]).toBeCloseTo(3 / 8);
+  });
+
+  it("throws on overlapping work intervals", () => {
+    const input: InputData = {
+      grants: [
+        {
+          id: "G1",
+          awardDate: pd("2024-01-01"),
+          symbol: "XYZ",
+          vests: [{ date: pd("2024-01-10"), shares: 100, fmvPerShare: 40 }],
+        },
+      ],
+      workIntervals: [
+        { start: pd("2024-01-01"), end: pd("2024-01-05"), location: "US-NY" },
+        { start: pd("2024-01-05"), end: pd("2024-01-10"), location: "US-CA" },
+      ],
+    };
+
+    expect(() => computeAllocations(input)).toThrow(/Overlapping work intervals/);
   });
 
   it("weights fractions by income, not share count", () => {
@@ -142,16 +185,16 @@ describe("computeAllocations – RSU", () => {
         },
       ],
       workIntervals: [
-        { start: pd("2024-01-01"), end: pd("2024-04-01"), location: "US-NY" },
+        { start: pd("2024-01-01"), end: pd("2024-03-31"), location: "US-NY" },
         { start: pd("2024-04-01"), end: pd("2024-12-31"), location: "US-CA" },
       ],
     };
 
     const result = computeAllocations(input);
     // Both grants have identical date ranges, so weighted average = simple average
-    expect(result[0].weightedFractionByLocation["US-NY"]).toBeCloseTo(0.5);
+    expect(result[0].weightedFractionByLocation["US-NY"]).toBeCloseTo(65 / 131);
     expect(result[0].totalIncome).toBe(10000);
-    expect(result[0].totalIncomeByLocation["US-NY"]).toBeCloseTo(5000);
+    expect(result[0].totalIncomeByLocation["US-NY"]).toBeCloseTo(10000 * (65 / 131));
   });
 });
 
@@ -191,7 +234,7 @@ describe("computeAllocations – ESPP", () => {
     expect(alloc.purchaseId).toBe("ESPP1");
     expect(alloc.discountPerShare).toBeCloseTo(7.5); // 50 - 42.5
     expect(alloc.ordinaryIncome).toBeCloseTo(750); // 7.5 * 100
-    expect(alloc.totalDays).toBe(182); // Jan 1 to Jul 1
+    expect(alloc.totalDays).toBe(131); // weekdays from Jan 1 to Jul 1, inclusive
     expect(alloc.fractionByLocation["US-NY"]).toBeCloseTo(1.0);
     expect(alloc.ordinaryIncomeByLocation["US-NY"]).toBeCloseTo(750);
   });
@@ -222,9 +265,9 @@ describe("computeAllocations – ESPP", () => {
         },
       ],
       workIntervals: [
-        // 2 months in NY (Jan 1 – Mar 1)
-        { start: pd("2024-01-01"), end: pd("2024-03-01"), location: "US-NY" },
-        // 4 months in CA (Mar 1 – Jul 1)
+        // Jan-Feb in NY
+        { start: pd("2024-01-01"), end: pd("2024-02-29"), location: "US-NY" },
+        // Mar-Jul 1 in CA
         { start: pd("2024-03-01"), end: pd("2024-07-01"), location: "US-CA" },
       ],
     };
@@ -232,13 +275,13 @@ describe("computeAllocations – ESPP", () => {
     const result = computeAllocations(input);
     const alloc = result[0].esppSaleAllocations[0];
 
-    // 60 days in NY, 122 days in CA, total 182 days
-    expect(alloc.daysByLocation["US-NY"]).toBe(60);
-    expect(alloc.daysByLocation["US-CA"]).toBe(122);
-    expect(alloc.totalDays).toBe(182);
+    // 44 working days in NY, 87 in CA, total 131 working days
+    expect(alloc.daysByLocation["US-NY"]).toBe(44);
+    expect(alloc.daysByLocation["US-CA"]).toBe(87);
+    expect(alloc.totalDays).toBe(131);
 
-    const nyFrac = 60 / 182;
-    const caFrac = 122 / 182;
+    const nyFrac = 44 / 131;
+    const caFrac = 87 / 131;
     expect(alloc.fractionByLocation["US-NY"]).toBeCloseTo(nyFrac);
     expect(alloc.fractionByLocation["US-CA"]).toBeCloseTo(caFrac);
     expect(alloc.ordinaryIncomeByLocation["US-NY"]).toBeCloseTo(750 * nyFrac);
@@ -411,7 +454,7 @@ describe("computeAllocations – ESPP", () => {
       ],
       workIntervals: [
         { start: pd("2023-01-01"), end: pd("2024-01-01"), location: "US-NY" },
-        { start: pd("2024-01-01"), end: pd("2026-01-01"), location: "US-CA" },
+        { start: pd("2024-01-02"), end: pd("2026-01-01"), location: "US-CA" },
       ],
     };
 
@@ -450,7 +493,7 @@ describe("computeAllocations – ESPP", () => {
         },
       ],
       workIntervals: [
-        { start: pd("2024-06-01"), end: pd("2024-09-01"), location: "US-NY" },
+        { start: pd("2024-06-01"), end: pd("2024-08-31"), location: "US-NY" },
         { start: pd("2024-09-01"), end: pd("2024-12-01"), location: "US-CA" },
       ],
     };
@@ -461,9 +504,9 @@ describe("computeAllocations – ESPP", () => {
     expect(result[0].esppSaleAllocations).toHaveLength(1);
 
     const alloc = result[0].esppSaleAllocations[0];
-    const totalDays = 183; // Jun 1 to Dec 1
-    const nyDays = 92; // Jun 1 to Sep 1
-    const caDays = 91; // Sep 1 to Dec 1
+    const totalDays = 130; // working days from Jun 1 to Dec 1, inclusive
+    const nyDays = 65; // Jun 1 to Aug 31 working days
+    const caDays = 65; // Sep 1 to Dec 1 working days
     expect(alloc.totalDays).toBe(totalDays);
     expect(alloc.daysByLocation["US-NY"]).toBe(nyDays);
     expect(alloc.daysByLocation["US-CA"]).toBe(caDays);

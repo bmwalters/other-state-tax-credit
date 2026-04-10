@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import type { Brokerage, FileMap, InputData, WorkInterval } from "../types.ts";
+import type { Brokerage, FileMap, InputData, NonWorkingInterval, WorkInterval } from "../types.ts";
 import { schwab } from "./brokerage/schwab.ts";
 import { parseInterval } from "./util/date.ts";
 
@@ -26,11 +26,32 @@ function parseWorkLocation(content: string): WorkInterval[] {
     });
 }
 
+function parseHolidays(content: string): NonWorkingInterval[] {
+  const lines = content.trim().split("\n");
+  const header = lines[0];
+  if (!header || !header.includes("interval")) {
+    throw new Error("holidays.csv: missing 'interval' header");
+  }
+
+  return lines
+    .slice(1)
+    .filter(Boolean)
+    .map((line) => {
+      const [interval, category] = line.split(",").map((s) => s.trim());
+      if (!interval || !category) {
+        throw new Error(`holidays.csv: malformed line: ${line}`);
+      }
+      const { start, end } = parseInterval(interval);
+      return { start, end, category };
+    });
+}
+
 export function loadDirectory(dirPath: string): InputData {
   const dirEntries = readdirSync(dirPath);
 
   const files: Map<string, string> = new Map();
   let workIntervals: WorkInterval[] | undefined;
+  let nonWorkingIntervals: NonWorkingInterval[] | undefined;
 
   for (const name of dirEntries) {
     const fullPath = join(dirPath, name);
@@ -38,6 +59,8 @@ export function loadDirectory(dirPath: string): InputData {
 
     if (name === "work-location.csv") {
       workIntervals = parseWorkLocation(content);
+    } else if (name === "holidays.csv") {
+      nonWorkingIntervals = parseHolidays(content);
     } else {
       files.set(name, content);
     }
@@ -56,6 +79,7 @@ export function loadDirectory(dirPath: string): InputData {
         esppPurchases: result.esppPurchases,
         esppSales: result.esppSales,
         workIntervals,
+        nonWorkingIntervals,
       };
     }
   }

@@ -15,8 +15,17 @@ export interface Grant {
 
 export interface WorkInterval {
   start: Temporal.PlainDate;
+  /** Inclusive end date. */
   end: Temporal.PlainDate;
   location: string; // ISO 3166-2 subdivision, e.g. "US-NY"
+}
+
+/** A period when no work was performed (holiday, vacation, sick, leave, etc.). */
+export interface NonWorkingInterval {
+  start: Temporal.PlainDate;
+  /** Inclusive end date. */
+  end: Temporal.PlainDate;
+  category: string; // e.g. "holiday", "vacation", "sick", "leave"
 }
 
 // ── ESPP types ──────────────────────────────────────────────────────
@@ -61,9 +70,9 @@ export interface EsppSaleAllocation {
   ordinaryIncome: number;
   /** Discount per share: FMV at purchase − purchase price. */
   discountPerShare: number;
-  /** Workday counts during the offering period, by location. */
+  /** Working-day counts during the offering period, by location. */
   daysByLocation: Record<string, number>;
-  /** Calendar days in the offering period (offering start → purchase date). */
+  /** Total working days in the offering period (offering start → purchase date, inclusive). */
   totalDays: number;
   fractionByLocation: Record<string, number>;
   ordinaryIncomeByLocation: Record<string, number>;
@@ -76,6 +85,8 @@ export interface InputData {
   esppPurchases?: EsppPurchase[];
   esppSales?: EsppSale[];
   workIntervals: WorkInterval[];
+  /** Days off (holidays, vacation, sick, leave). Weekdays in these intervals are excluded from both numerator and denominator. */
+  nonWorkingIntervals?: NonWorkingInterval[];
 }
 
 export type FileMap = ReadonlyMap<string, string>;
