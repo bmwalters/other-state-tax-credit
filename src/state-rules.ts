@@ -40,7 +40,7 @@ export interface StateRulesConfig {
   reportingEvents: ReportingEvent[];
   /**
    * Pre-computed: per-year work-day counts by physical location.
-   * Used for the de minimis check (<5 days + no reporting event → suppress).
+   * Used for the de minimis check (<10 days + no reporting event → suppress).
    */
   yearlyDayCounts: ReadonlyMap<number, Readonly<Record<string, number>>>;
 }
@@ -115,7 +115,7 @@ export function isNoIncomeTaxState(location: string): boolean {
 
 /**
  * True if a physical work location qualifies for de minimis treatment
- * in a given year: fewer than 5 work days AND no reporting event filed.
+ * in a given year: fewer than 10 work days AND no reporting event filed.
  *
  * De minimis locations are *candidates* for suppression, but whether
  * suppression actually occurs depends on the number of residence states
@@ -126,7 +126,7 @@ export function isDeMinimis(location: string, year: number, config: StateRulesCo
 
   const yearCounts = config.yearlyDayCounts.get(year);
   const dayCount = yearCounts?.[location] ?? 0;
-  if (dayCount >= 5) return false;
+  if (dayCount >= 10) return false;
 
   const reportingStates = reportingStatesForYear(config.reportingEvents, year);
   return !reportingStates.has(location);
@@ -174,7 +174,7 @@ export function getStatutoryResidenceStates(
  *   1. **No-income-tax states** (TX, FL, …) are always excluded — you
  *      cannot file a return there regardless.
  *
- *   2. **De minimis states** (<5 days, no reporting event) are excluded
+ *   2. **De minimis states** (<10 days, no reporting event) are excluded
  *      only when a single residence state would otherwise claim the
  *      income. When *multiple* residence states claim the same income
  *      (domicile ≠ statutory residence), keeping the de minimis state

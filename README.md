@@ -35,7 +35,7 @@ A physical work location is suppressed (excluded from the claiming states) when:
    earned income (AK, FL, NV, NH, SD, TN, TX, WA, WY). Always suppressed;
    you cannot file there regardless.
 
-2. **De minimis exception** — Fewer than 5 work days in the state for the
+2. **De minimis exception** — Fewer than 10 work days in the state for the
    year AND no reporting event (W-2/1099) was filed for that state.
    Suppressed only when **one or fewer** residence states claim the income.
    When multiple residence states claim it, the de minimis state is kept so
