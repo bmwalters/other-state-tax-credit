@@ -10,7 +10,7 @@ function formatDollar(n: number): string {
   return "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function printSummary(summaries: TaxYearSummary[]): void {
+function printSummary(summaries: TaxYearSummary[], showDetailVests: boolean): void {
   for (const summary of summaries) {
     const locations = Object.keys(summary.weightedFractionByLocation);
 
@@ -25,17 +25,38 @@ function printSummary(summaries: TaxYearSummary[]): void {
       console.log(header);
       console.log("-".repeat(header.length));
 
-      for (const va of summary.vestAllocations) {
-        const locCols = locations
-          .map(
-            (l) =>
-              `${formatPercent(va.fractionByLocation[l] ?? 0).padStart(10)} ${formatDollar(va.incomeByLocation[l] ?? 0).padStart(14)}`,
-          )
-          .join("  ");
-        console.log(
-          `${va.grantId.padEnd(10)} ${va.vestDate.toString().padEnd(12)} ${String(va.shares).padStart(8)} ${formatDollar(va.fmvPerShare).padStart(10)} ${formatDollar(va.income).padStart(14)}  ${locCols}`,
-        );
+      if (showDetailVests) {
+        for (const va of summary.vestAllocations) {
+          const locCols = locations
+            .map(
+              (l) =>
+                `${formatPercent(va.fractionByLocation[l] ?? 0).padStart(10)} ${formatDollar(va.incomeByLocation[l] ?? 0).padStart(14)}`,
+            )
+            .join("  ");
+          console.log(
+            `${va.grantId.padEnd(10)} ${va.vestDate.toString().padEnd(12)} ${String(va.shares).padStart(8)} ${formatDollar(va.fmvPerShare).padStart(10)} ${formatDollar(va.income).padStart(14)}  ${locCols}`,
+          );
+        }
       }
+
+      // RSU vest totals
+      const vestShares = summary.vestAllocations.reduce((s, v) => s + v.shares, 0);
+      const vestIncome = summary.vestAllocations.reduce((s, v) => s + v.income, 0);
+      const vestIncomeByLocation: Record<string, number> = {};
+      for (const va of summary.vestAllocations) {
+        for (const [loc, inc] of Object.entries(va.incomeByLocation)) {
+          vestIncomeByLocation[loc] = (vestIncomeByLocation[loc] ?? 0) + inc;
+        }
+      }
+      const vestLocCols = locations
+        .map(
+          (l) =>
+            `${formatPercent(vestIncome > 0 ? (vestIncomeByLocation[l] ?? 0) / vestIncome : 0).padStart(10)} ${formatDollar(vestIncomeByLocation[l] ?? 0).padStart(14)}`,
+        )
+        .join("  ");
+      console.log(
+        `${"RSU Total".padEnd(10)} ${"".padEnd(12)} ${String(vestShares).padStart(8)} ${"".padStart(10)} ${formatDollar(vestIncome).padStart(14)}  ${vestLocCols}`,
+      );
     }
 
     // ── ESPP sale allocations ──
@@ -126,9 +147,13 @@ function printWarnings(): void {
   console.log("");
 }
 
-const dirPath = process.argv[2];
+const args = process.argv.slice(2);
+const detailVests = args.includes("--detail-vests");
+const filteredArgs = args.filter((a) => a !== "--detail-vests");
+
+const dirPath = filteredArgs[0];
 if (!dirPath) {
-  console.error("usage: node cli.ts <data-directory>");
+  console.error("usage: node cli.ts <data-directory> [--detail-vests]");
   process.exit(1);
 }
 
@@ -136,5 +161,5 @@ printWarnings();
 const input = loadDirectory(dirPath);
 const summaries = computeAllocations(input);
 const salaryAllocations = computeSalaryAllocations(input);
-printSummary(summaries);
+printSummary(summaries, detailVests);
 printSalaryAllocations(salaryAllocations);
