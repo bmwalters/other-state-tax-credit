@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Temporal } from "temporal-polyfill";
-import { computeAllocations } from "../src/engine.ts";
+import { computeAllocations, computeSalaryAllocations } from "../src/engine.ts";
 import type { InputData } from "../src/types.ts";
 
 function pd(s: string) {
@@ -664,5 +664,96 @@ describe("computeAllocations – ESPP", () => {
     expect(alloc.daysByLocation["US-CA"]).toBe(caDays);
     expect(alloc.discountPerShare).toBeCloseTo(7); // 45 - 38
     expect(alloc.ordinaryIncome).toBeCloseTo(350); // 7 * 50
+  });
+});
+
+describe("computeSalaryAllocations", () => {
+  it("computes 100% for a single location covering the full year", () => {
+    const input: InputData = {
+      grants: [],
+      workIntervals: [{ start: pd("2024-01-01"), end: pd("2024-12-31"), location: "US-NY" }],
+    };
+
+    const result = computeSalaryAllocations(input);
+    expect(result).toHaveLength(1);
+    expect(result[0].year).toBe(2024);
+    expect(result[0].totalDays).toBe(262); // 2024 has 262 weekdays
+    expect(result[0].daysByLocation["US-NY"]).toBe(262);
+    expect(result[0].fractionByLocation["US-NY"]).toBeCloseTo(1.0);
+  });
+
+  it("splits across two locations in the same year", () => {
+    const input: InputData = {
+      grants: [],
+      workIntervals: [
+        { start: pd("2024-01-01"), end: pd("2024-06-30"), location: "US-NY" },
+        { start: pd("2024-07-01"), end: pd("2024-12-31"), location: "US-CA" },
+      ],
+    };
+
+    const result = computeSalaryAllocations(input);
+    expect(result).toHaveLength(1);
+    expect(result[0].year).toBe(2024);
+    const nyDays = result[0].daysByLocation["US-NY"]!;
+    const caDays = result[0].daysByLocation["US-CA"]!;
+    expect(nyDays + caDays).toBe(262);
+    expect(result[0].fractionByLocation["US-NY"]).toBeCloseTo(nyDays / 262);
+    expect(result[0].fractionByLocation["US-CA"]).toBeCloseTo(caDays / 262);
+  });
+
+  it("spans multiple calendar years", () => {
+    const input: InputData = {
+      grants: [],
+      workIntervals: [
+        { start: pd("2023-01-01"), end: pd("2024-12-31"), location: "US-NY" },
+      ],
+    };
+
+    const result = computeSalaryAllocations(input);
+    expect(result).toHaveLength(2);
+    expect(result[0].year).toBe(2023);
+    expect(result[1].year).toBe(2024);
+    expect(result[0].fractionByLocation["US-NY"]).toBeCloseTo(1.0);
+    expect(result[1].fractionByLocation["US-NY"]).toBeCloseTo(1.0);
+  });
+
+  it("excludes holidays from both numerator and denominator", () => {
+    const input: InputData = {
+      grants: [],
+      workIntervals: [{ start: pd("2024-01-01"), end: pd("2024-12-31"), location: "US-NY" }],
+      nonWorkingIntervals: [
+        { start: pd("2024-01-01"), end: pd("2024-01-01"), category: "holiday" },
+        { start: pd("2024-12-25"), end: pd("2024-12-25"), category: "holiday" },
+      ],
+    };
+
+    const result = computeSalaryAllocations(input);
+    expect(result[0].totalDays).toBe(260); // 262 - 2 holidays
+    expect(result[0].daysByLocation["US-NY"]).toBe(260);
+    expect(result[0].fractionByLocation["US-NY"]).toBeCloseTo(1.0);
+  });
+
+  it("treats uncovered weekdays as non-NY (reduces NY fraction)", () => {
+    // Only cover Jan in NY; rest of year uncovered
+    const input: InputData = {
+      grants: [],
+      workIntervals: [{ start: pd("2024-01-01"), end: pd("2024-01-31"), location: "US-NY" }],
+    };
+
+    const result = computeSalaryAllocations(input);
+    expect(result).toHaveLength(1);
+    expect(result[0].totalDays).toBe(262); // full year denominator
+    expect(result[0].daysByLocation["US-NY"]).toBe(23); // weekdays in Jan 2024
+    expect(result[0].fractionByLocation["US-NY"]).toBeCloseTo(23 / 262);
+  });
+
+  it("returns empty for no work intervals", () => {
+    const input: InputData = {
+      grants: [],
+      workIntervals: [],
+    };
+
+    const result = computeSalaryAllocations(input);
+    expect(result).toHaveLength(0);
   });
 });

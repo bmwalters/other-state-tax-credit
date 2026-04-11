@@ -1,3 +1,4 @@
+import { Temporal } from "temporal-polyfill";
 import type {
   EsppPurchase,
   EsppSale,
@@ -5,6 +6,7 @@ import type {
   Grant,
   InputData,
   NonWorkingInterval,
+  SalaryAllocation,
   TaxYearSummary,
   VestAllocation,
   Vest,
@@ -211,4 +213,60 @@ export function computeAllocations(input: InputData): TaxYearSummary[] {
   }
 
   return summaries;
+}
+
+/**
+ * Compute calendar-year working-day allocations for salary sourcing.
+ *
+ * Per 20 NYCRR §132.18(a), salary (i.e. non-equity W-2 compensation) is
+ * allocated to NY using a simple working-day fraction over the calendar year:
+ *
+ *   NY salary = total salary × (NY working days / total working days)
+ *
+ * This is distinct from RSU/ESPP allocation, which uses grant→vest or
+ * offering→purchase windows.
+ *
+ * Computes one SalaryAllocation per calendar year that has any work-interval
+ * coverage.
+ */
+export function computeSalaryAllocations(input: InputData): SalaryAllocation[] {
+  const nonWorking = input.nonWorkingIntervals ?? [];
+
+  // Determine the range of years covered by work intervals.
+  if (input.workIntervals.length === 0) return [];
+
+  let minYear = Infinity;
+  let maxYear = -Infinity;
+  for (const wi of input.workIntervals) {
+    minYear = Math.min(minYear, wi.start.year);
+    maxYear = Math.max(maxYear, wi.end.year);
+  }
+
+  const allocations: SalaryAllocation[] = [];
+
+  for (let year = minYear; year <= maxYear; year++) {
+    const janFirst = Temporal.PlainDate.from({ year, month: 1, day: 1 });
+    const decLast = Temporal.PlainDate.from({ year, month: 12, day: 31 });
+
+    const { daysByLocation, totalWorkingDays } = countWorkingDaysByLocation(
+      janFirst,
+      decLast,
+      input.workIntervals,
+      nonWorking,
+    );
+
+    const fractionByLocation: Record<string, number> = {};
+    for (const [loc, days] of Object.entries(daysByLocation)) {
+      fractionByLocation[loc] = totalWorkingDays > 0 ? days / totalWorkingDays : 0;
+    }
+
+    allocations.push({
+      year,
+      daysByLocation,
+      totalDays: totalWorkingDays,
+      fractionByLocation,
+    });
+  }
+
+  return allocations;
 }

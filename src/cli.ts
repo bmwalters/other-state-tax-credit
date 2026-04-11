@@ -1,6 +1,6 @@
 import { loadDirectory } from "./input/index.ts";
-import { computeAllocations } from "./engine.ts";
-import type { TaxYearSummary } from "./types.ts";
+import { computeAllocations, computeSalaryAllocations } from "./engine.ts";
+import type { SalaryAllocation, TaxYearSummary } from "./types.ts";
 
 function formatPercent(n: number): string {
   return (n * 100).toFixed(2) + "%";
@@ -79,6 +79,41 @@ function printSummary(summaries: TaxYearSummary[]): void {
   }
 }
 
+function printSalaryAllocations(allocations: SalaryAllocation[]): void {
+  if (allocations.length === 0) return;
+
+  console.log("\n\n=== Salary Allocation (20 NYCRR §132.18) ===");
+  console.log(
+    "Apply these fractions to your non-equity W-2 compensation (salary,",
+  );
+  console.log(
+    "bonus, taxable fringe benefits, etc. — excluding the RSU/ESPP ordinary",
+  );
+  console.log("income reported above).\n");
+
+  const allLocations = [
+    ...new Set(allocations.flatMap((a) => Object.keys(a.fractionByLocation))),
+  ].sort();
+
+  const header =
+    `${"Year".padEnd(6)} ${"Work Days".padStart(10)}  ` +
+    allLocations
+      .map((l) => `${(l + " days").padStart(10)} ${(l + " %").padStart(10)}`)
+      .join("  ");
+  console.log(header);
+  console.log("-".repeat(header.length));
+
+  for (const a of allocations) {
+    const locCols = allLocations
+      .map(
+        (l) =>
+          `${String(a.daysByLocation[l] ?? 0).padStart(10)} ${formatPercent(a.fractionByLocation[l] ?? 0).padStart(10)}`,
+      )
+      .join("  ");
+    console.log(`${String(a.year).padEnd(6)} ${String(a.totalDays).padStart(10)}  ${locCols}`);
+  }
+}
+
 function printWarnings(): void {
   console.log("NOTE: This tool assumes your work-location.csv already reflects NY's rules:");
   console.log('  - "Convenience of the employer" test (20 NYCRR §132.18(a)):');
@@ -100,4 +135,6 @@ if (!dirPath) {
 printWarnings();
 const input = loadDirectory(dirPath);
 const summaries = computeAllocations(input);
+const salaryAllocations = computeSalaryAllocations(input);
 printSummary(summaries);
+printSalaryAllocations(salaryAllocations);

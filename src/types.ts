@@ -87,6 +87,21 @@ export interface EsppSaleAllocation {
   ordinaryIncomeByLocation: Record<string, number>;
 }
 
+/**
+ * Calendar-year working-day allocation for salary sourcing.
+ *
+ * Per 20 NYCRR §132.18(a), salary is allocated to NY based on:
+ *   NY salary = total compensation × (NY working days / total working days)
+ * where non-working days (weekends, holidays, vacation, sick, leave) are
+ * excluded from both numerator and denominator.
+ */
+export interface SalaryAllocation {
+  year: number;
+  daysByLocation: Record<string, number>;
+  totalDays: number;
+  fractionByLocation: Record<string, number>;
+}
+
 // ── Inputs & outputs ────────────────────────────────────────────────
 
 export interface InputData {
