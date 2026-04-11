@@ -7,9 +7,17 @@ function pd(s: string) {
   return Temporal.PlainDate.from(s);
 }
 
+const EMPTY_STATE_RULES = {
+  nonWorkingIntervals: [],
+  reportingEvents: [],
+  domicileIntervals: [],
+  statutoryResidences: [],
+} as const satisfies Partial<InputData>;
+
 describe("computeAllocations – RSU", () => {
   it("allocates 100% to a single location when all work is there", () => {
     const input: InputData = {
+      ...EMPTY_STATE_RULES,
       grants: [
         {
           id: "G1",
@@ -34,6 +42,7 @@ describe("computeAllocations – RSU", () => {
 
   it("splits proportionally across two locations", () => {
     const input: InputData = {
+      ...EMPTY_STATE_RULES,
       grants: [
         {
           id: "G1",
@@ -61,6 +70,7 @@ describe("computeAllocations – RSU", () => {
 
   it("only counts days within the grant-to-vest window", () => {
     const input: InputData = {
+      ...EMPTY_STATE_RULES,
       grants: [
         {
           id: "G1",
@@ -84,6 +94,7 @@ describe("computeAllocations – RSU", () => {
 
   it("groups vests by tax year", () => {
     const input: InputData = {
+      ...EMPTY_STATE_RULES,
       grants: [
         {
           id: "G1",
@@ -106,6 +117,7 @@ describe("computeAllocations – RSU", () => {
 
   it("excludes listed non-working days from the denominator", () => {
     const input: InputData = {
+      ...EMPTY_STATE_RULES,
       grants: [
         {
           id: "G1",
@@ -131,6 +143,7 @@ describe("computeAllocations – RSU", () => {
 
   it("treats uncovered weekdays as non-NY", () => {
     const input: InputData = {
+      ...EMPTY_STATE_RULES,
       grants: [
         {
           id: "G1",
@@ -140,6 +153,7 @@ describe("computeAllocations – RSU", () => {
         },
       ],
       workIntervals: [{ start: pd("2024-01-01"), end: pd("2024-01-03"), location: "US-NY" }],
+      reportingEvents: [{ year: 2024, state: "US-NY" }],
     };
 
     const result = computeAllocations(input);
@@ -151,6 +165,7 @@ describe("computeAllocations – RSU", () => {
 
   it("throws on overlapping work intervals", () => {
     const input: InputData = {
+      ...EMPTY_STATE_RULES,
       grants: [
         {
           id: "G1",
@@ -170,6 +185,7 @@ describe("computeAllocations – RSU", () => {
 
   it("weights fractions by income, not share count", () => {
     const input: InputData = {
+      ...EMPTY_STATE_RULES,
       grants: [
         {
           id: "G1",
@@ -202,6 +218,7 @@ describe("computeAllocations – ESPP", () => {
   it("allocates 100% of ESPP ordinary income to single location", () => {
     // 6-month offering, all work in NY, sell immediately
     const input: InputData = {
+      ...EMPTY_STATE_RULES,
       grants: [],
       esppPurchases: [
         {
@@ -247,6 +264,7 @@ describe("computeAllocations – ESPP", () => {
     // Per spec: "If you worked in NY for 2 months of a 6-month ESPP period,
     // NY will generally want 1/3 of that discount amount."
     const input: InputData = {
+      ...EMPTY_STATE_RULES,
       grants: [],
       esppPurchases: [
         {
@@ -295,6 +313,7 @@ describe("computeAllocations – ESPP", () => {
 
   it("uses actual gain when a disqualifying sale is below purchase-date FMV", () => {
     const input: InputData = {
+      ...EMPTY_STATE_RULES,
       grants: [],
       esppPurchases: [
         {
@@ -329,6 +348,7 @@ describe("computeAllocations – ESPP", () => {
 
   it("treats disqualifying ESPP loss sales as zero ordinary income", () => {
     const input: InputData = {
+      ...EMPTY_STATE_RULES,
       grants: [],
       esppPurchases: [
         {
@@ -363,6 +383,7 @@ describe("computeAllocations – ESPP", () => {
 
   it("uses the qualified-disposition grant-date discount cap", () => {
     const input: InputData = {
+      ...EMPTY_STATE_RULES,
       grants: [],
       esppPurchases: [
         {
@@ -398,6 +419,7 @@ describe("computeAllocations – ESPP", () => {
 
   it("caps qualified-disposition ordinary income at actual gain", () => {
     const input: InputData = {
+      ...EMPTY_STATE_RULES,
       grants: [],
       esppPurchases: [
         {
@@ -431,6 +453,7 @@ describe("computeAllocations – ESPP", () => {
   it("groups ESPP sales by the sale year (not purchase year)", () => {
     // Purchase in 2024, sell in 2025
     const input: InputData = {
+      ...EMPTY_STATE_RULES,
       grants: [],
       esppPurchases: [
         {
@@ -465,6 +488,7 @@ describe("computeAllocations – ESPP", () => {
 
   it("handles partial sales from same purchase lot", () => {
     const input: InputData = {
+      ...EMPTY_STATE_RULES,
       grants: [],
       esppPurchases: [
         {
@@ -511,6 +535,7 @@ describe("computeAllocations – ESPP", () => {
 
   it("throws on sale referencing unknown purchase", () => {
     const input: InputData = {
+      ...EMPTY_STATE_RULES,
       grants: [],
       esppPurchases: [],
       esppSales: [
@@ -530,6 +555,7 @@ describe("computeAllocations – ESPP", () => {
 
   it("combines RSU and ESPP income in the same tax year", () => {
     const input: InputData = {
+      ...EMPTY_STATE_RULES,
       grants: [
         {
           id: "G1",
@@ -580,6 +606,7 @@ describe("computeAllocations – ESPP", () => {
     // Offering period: Jan 2023 – Jul 2023 (all in NY)
     // Sale: Dec 2025 (now working in CA — but that doesn't matter)
     const input: InputData = {
+      ...EMPTY_STATE_RULES,
       grants: [],
       esppPurchases: [
         {
@@ -622,6 +649,7 @@ describe("computeAllocations – ESPP", () => {
 
   it("handles ESPP with no grants (ESPP-only input)", () => {
     const input: InputData = {
+      ...EMPTY_STATE_RULES,
       grants: [],
       esppPurchases: [
         {
@@ -670,6 +698,7 @@ describe("computeAllocations – ESPP", () => {
 describe("computeSalaryAllocations", () => {
   it("computes 100% for a single location covering the full year", () => {
     const input: InputData = {
+      ...EMPTY_STATE_RULES,
       grants: [],
       workIntervals: [{ start: pd("2024-01-01"), end: pd("2024-12-31"), location: "US-NY" }],
     };
@@ -684,6 +713,7 @@ describe("computeSalaryAllocations", () => {
 
   it("splits across two locations in the same year", () => {
     const input: InputData = {
+      ...EMPTY_STATE_RULES,
       grants: [],
       workIntervals: [
         { start: pd("2024-01-01"), end: pd("2024-06-30"), location: "US-NY" },
@@ -703,10 +733,9 @@ describe("computeSalaryAllocations", () => {
 
   it("spans multiple calendar years", () => {
     const input: InputData = {
+      ...EMPTY_STATE_RULES,
       grants: [],
-      workIntervals: [
-        { start: pd("2023-01-01"), end: pd("2024-12-31"), location: "US-NY" },
-      ],
+      workIntervals: [{ start: pd("2023-01-01"), end: pd("2024-12-31"), location: "US-NY" }],
     };
 
     const result = computeSalaryAllocations(input);
@@ -719,6 +748,7 @@ describe("computeSalaryAllocations", () => {
 
   it("excludes holidays from both numerator and denominator", () => {
     const input: InputData = {
+      ...EMPTY_STATE_RULES,
       grants: [],
       workIntervals: [{ start: pd("2024-01-01"), end: pd("2024-12-31"), location: "US-NY" }],
       nonWorkingIntervals: [
@@ -736,6 +766,7 @@ describe("computeSalaryAllocations", () => {
   it("treats uncovered weekdays as non-NY (reduces NY fraction)", () => {
     // Only cover Jan in NY; rest of year uncovered
     const input: InputData = {
+      ...EMPTY_STATE_RULES,
       grants: [],
       workIntervals: [{ start: pd("2024-01-01"), end: pd("2024-01-31"), location: "US-NY" }],
     };
@@ -748,10 +779,7 @@ describe("computeSalaryAllocations", () => {
   });
 
   it("returns empty for no work intervals", () => {
-    const input: InputData = {
-      grants: [],
-      workIntervals: [],
-    };
+    const input: InputData = { ...EMPTY_STATE_RULES, grants: [], workIntervals: [] };
 
     const result = computeSalaryAllocations(input);
     expect(result).toHaveLength(0);

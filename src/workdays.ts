@@ -1,5 +1,7 @@
 import { Temporal } from "temporal-polyfill";
 import type { NonWorkingInterval, WorkInterval } from "./types.ts";
+import type { StateRulesConfig } from "./state-rules.ts";
+import { resolveClaimingStates } from "./state-rules.ts";
 
 /**
  * Returns true if the given date is a weekday (Mon–Fri).
@@ -35,56 +37,33 @@ function buildNonWorkingSet(
   return set;
 }
 
-/**
- * Count working days in the inclusive range [start, end], excluding
- * weekends and any dates in `nonWorkingDays`.
- */
-export function countWorkingDays(
-  start: Temporal.PlainDate,
-  end: Temporal.PlainDate,
-  nonWorkingDays: Set<string>,
-): number {
-  let count = 0;
-  let cursor = start;
-  while (Temporal.PlainDate.compare(cursor, end) <= 0) {
-    if (isWeekday(cursor) && !nonWorkingDays.has(cursor.toString())) {
-      count++;
-    }
-    cursor = cursor.add({ days: 1 });
-  }
-  return count;
-}
-
 export interface WorkingDayAllocation {
-  /** Working days per location within the allocation window. */
+  /**
+   * Working days per claiming state within the allocation window.
+   *
+   * A single day may be claimed by multiple states (domicile, statutory
+   * residence, non-resident sourcing), so the sum of values may exceed
+   * totalWorkingDays.
+   */
   daysByLocation: Record<string, number>;
   /** Total working days in the allocation window (the denominator). */
   totalWorkingDays: number;
 }
 
 /**
- * Validate work intervals and count working days per location within the
- * inclusive allocation window [start, end].
- *
- * Implements the §132.18(a) working-day formula:
- * - Weekends (Sat/Sun) are excluded.
- * - Non-working intervals (holidays, vacation, sick, leave) are excluded.
- * - Remaining uncovered weekdays are treated as non-NY days.
+ * Build a map of date → physical work location for every working day in
+ * the allocation window [start, end] (inclusive).
  *
  * Throws on overlapping work intervals.
  */
-export function countWorkingDaysByLocation(
+function buildDayLocationMap(
   start: Temporal.PlainDate,
   end: Temporal.PlainDate,
   workIntervals: WorkInterval[],
-  nonWorkingIntervals: NonWorkingInterval[],
-): WorkingDayAllocation {
-  const nonWorkingDays = buildNonWorkingSet(nonWorkingIntervals, start, end);
-
-  // Sort work intervals by start date for deterministic overlap detection
+  nonWorkingDays: Set<string>,
+): Map<string, string> {
   const sorted = [...workIntervals]
     .filter((wi) => {
-      // Only keep intervals that overlap the allocation window
       return (
         Temporal.PlainDate.compare(wi.start, end) <= 0 &&
         Temporal.PlainDate.compare(wi.end, start) >= 0
@@ -92,7 +71,6 @@ export function countWorkingDaysByLocation(
     })
     .sort((a, b) => Temporal.PlainDate.compare(a.start, b.start));
 
-  // Build a day → location map for every working day in the window
   const dayLocation = new Map<string, string>();
 
   for (const wi of sorted) {
@@ -114,19 +92,44 @@ export function countWorkingDaysByLocation(
     }
   }
 
+  return dayLocation;
+}
+
+/**
+ * Validate work intervals and count working days per claiming state
+ * within the inclusive allocation window [start, end].
+ *
+ * Each day is resolved through state rules to the union of claiming
+ * states (domicile, statutory residence, and/or non-resident physical
+ * location). A single day may appear in multiple state buckets.
+ *
+ * Throws on overlapping work intervals.
+ */
+export function countWorkingDaysByLocation(
+  start: Temporal.PlainDate,
+  end: Temporal.PlainDate,
+  workIntervals: WorkInterval[],
+  nonWorkingIntervals: NonWorkingInterval[],
+  stateRulesConfig: StateRulesConfig,
+): WorkingDayAllocation {
+  const nonWorkingDays = buildNonWorkingSet(nonWorkingIntervals, start, end);
+  const dayLocation = buildDayLocationMap(start, end, workIntervals, nonWorkingDays);
+
+  const daysByLocation: Record<string, number> = {};
   let totalWorkingDays = 0;
+
   let cursor = start;
   while (Temporal.PlainDate.compare(cursor, end) <= 0) {
-    if (isWeekday(cursor) && !nonWorkingDays.has(cursor.toString())) {
+    const key = cursor.toString();
+    if (isWeekday(cursor) && !nonWorkingDays.has(key)) {
       totalWorkingDays++;
+      const physicalLocation = dayLocation.get(key);
+      const claimingStates = resolveClaimingStates(cursor, physicalLocation, stateRulesConfig);
+      for (const state of claimingStates) {
+        daysByLocation[state] = (daysByLocation[state] ?? 0) + 1;
+      }
     }
     cursor = cursor.add({ days: 1 });
-  }
-
-  // Aggregate by location
-  const daysByLocation: Record<string, number> = {};
-  for (const loc of dayLocation.values()) {
-    daysByLocation[loc] = (daysByLocation[loc] ?? 0) + 1;
   }
 
   return { daysByLocation, totalWorkingDays };

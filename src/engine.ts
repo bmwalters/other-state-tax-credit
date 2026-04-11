@@ -13,18 +13,21 @@ import type {
   WorkInterval,
 } from "./types.ts";
 import { countWorkingDaysByLocation } from "./workdays.ts";
+import { buildStateRulesConfig, type StateRulesConfig } from "./state-rules.ts";
 
 function allocateVest(
   grant: Grant,
   vest: Vest,
   workIntervals: WorkInterval[],
   nonWorkingIntervals: NonWorkingInterval[],
+  stateRulesConfig: StateRulesConfig,
 ): VestAllocation {
   const { daysByLocation, totalWorkingDays } = countWorkingDaysByLocation(
     grant.awardDate,
     vest.date,
     workIntervals,
     nonWorkingIntervals,
+    stateRulesConfig,
   );
 
   const fractionByLocation: Record<string, number> = {};
@@ -90,12 +93,14 @@ function allocateEsppSale(
   sale: EsppSale,
   workIntervals: WorkInterval[],
   nonWorkingIntervals: NonWorkingInterval[],
+  stateRulesConfig: StateRulesConfig,
 ): EsppSaleAllocation {
   const { daysByLocation, totalWorkingDays } = countWorkingDaysByLocation(
     purchase.offeringStartDate,
     purchase.purchaseDate,
     workIntervals,
     nonWorkingIntervals,
+    stateRulesConfig,
   );
 
   const discountPerShare = purchase.fmvPerShareAtPurchase - purchase.purchasePricePerShare;
@@ -110,14 +115,14 @@ function allocateEsppSale(
     ordinaryIncomeByLocation[loc] = ordinaryIncome * frac;
   }
 
-    return {
-      purchaseId: purchase.id,
-      saleDate: sale.saleDate,
-      shares: sale.shares,
-      dispositionType: sale.dispositionType,
-      ordinaryIncome,
-      discountPerShare,
-      daysByLocation,
+  return {
+    purchaseId: purchase.id,
+    saleDate: sale.saleDate,
+    shares: sale.shares,
+    dispositionType: sale.dispositionType,
+    ordinaryIncome,
+    discountPerShare,
+    daysByLocation,
     totalDays: totalWorkingDays,
     fractionByLocation,
     ordinaryIncomeByLocation,
@@ -137,12 +142,18 @@ export function computeAllocations(input: InputData): TaxYearSummary[] {
     return byYear.get(year)!;
   }
 
-  const nonWorking = input.nonWorkingIntervals ?? [];
+  const stateRulesConfig = buildStateRulesConfigFromInput(input);
 
   // ── RSU vests ──
   for (const grant of input.grants) {
     for (const vest of grant.vests) {
-      const alloc = allocateVest(grant, vest, input.workIntervals, nonWorking);
+      const alloc = allocateVest(
+        grant,
+        vest,
+        input.workIntervals,
+        input.nonWorkingIntervals,
+        stateRulesConfig,
+      );
       bucket(vest.date.year).vestAllocations.push(alloc);
     }
   }
@@ -160,7 +171,13 @@ export function computeAllocations(input: InputData): TaxYearSummary[] {
         `ESPP sale references unknown purchase "${sale.purchaseId}" — not found in esppPurchases`,
       );
     }
-    const alloc = allocateEsppSale(purchase, sale, input.workIntervals, nonWorking);
+    const alloc = allocateEsppSale(
+      purchase,
+      sale,
+      input.workIntervals,
+      input.nonWorkingIntervals,
+      stateRulesConfig,
+    );
     bucket(sale.saleDate.year).esppSaleAllocations.push(alloc);
   }
 
@@ -226,13 +243,15 @@ export function computeAllocations(input: InputData): TaxYearSummary[] {
  * This is distinct from RSU/ESPP allocation, which uses grant→vest or
  * offering→purchase windows.
  *
+ * Fractions may sum to >1.0 because multiple states can independently
+ * claim the same day's income.
+ *
  * Computes one SalaryAllocation per calendar year that has any work-interval
  * coverage.
  */
 export function computeSalaryAllocations(input: InputData): SalaryAllocation[] {
-  const nonWorking = input.nonWorkingIntervals ?? [];
+  const stateRulesConfig = buildStateRulesConfigFromInput(input);
 
-  // Determine the range of years covered by work intervals.
   if (input.workIntervals.length === 0) return [];
 
   let minYear = Infinity;
@@ -252,7 +271,8 @@ export function computeSalaryAllocations(input: InputData): SalaryAllocation[] {
       janFirst,
       decLast,
       input.workIntervals,
-      nonWorking,
+      input.nonWorkingIntervals,
+      stateRulesConfig,
     );
 
     const fractionByLocation: Record<string, number> = {};
@@ -269,4 +289,14 @@ export function computeSalaryAllocations(input: InputData): SalaryAllocation[] {
   }
 
   return allocations;
+}
+
+function buildStateRulesConfigFromInput(input: InputData): StateRulesConfig {
+  return buildStateRulesConfig(
+    input.workIntervals,
+    input.nonWorkingIntervals,
+    input.domicileIntervals,
+    input.statutoryResidences,
+    input.reportingEvents,
+  );
 }

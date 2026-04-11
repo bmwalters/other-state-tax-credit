@@ -1,10 +1,24 @@
 import { describe, expect, it } from "vitest";
 import { Temporal } from "temporal-polyfill";
-import { countWorkingDays, countWorkingDaysByLocation, isWeekday } from "../src/workdays.ts";
+import { countWorkingDaysByLocation, isWeekday } from "../src/workdays.ts";
+import { buildStateRulesConfig } from "../src/state-rules.ts";
 import type { NonWorkingInterval, WorkInterval } from "../src/types.ts";
 
 function pd(s: string) {
   return Temporal.PlainDate.from(s);
+}
+
+/**
+ * Build a StateRulesConfig with no residence rules but with reporting
+ * events for every location so the de minimis rule doesn't suppress them.
+ */
+function emptyRules(workIntervals: WorkInterval[], nonWorkingIntervals: NonWorkingInterval[] = []) {
+  const years = new Set(workIntervals.flatMap((wi) => [wi.start.year, wi.end.year]));
+  const locations = new Set(workIntervals.map((wi) => wi.location));
+  const reportingEvents = [...years].flatMap((year) =>
+    [...locations].map((state) => ({ year, state })),
+  );
+  return buildStateRulesConfig(workIntervals, nonWorkingIntervals, [], [], reportingEvents);
 }
 
 describe("isWeekday", () => {
@@ -23,32 +37,6 @@ describe("isWeekday", () => {
   });
 });
 
-describe("countWorkingDays", () => {
-  it("counts weekdays in a full week", () => {
-    // Mon 2024-01-01 through Sun 2024-01-07 → 5 weekdays
-    expect(countWorkingDays(pd("2024-01-01"), pd("2024-01-07"), new Set())).toBe(5);
-  });
-
-  it("excludes non-working days", () => {
-    // Same week but Wed is a holiday
-    const nw = new Set(["2024-01-03"]);
-    expect(countWorkingDays(pd("2024-01-01"), pd("2024-01-07"), nw)).toBe(4);
-  });
-
-  it("counts a single weekday", () => {
-    expect(countWorkingDays(pd("2024-01-01"), pd("2024-01-01"), new Set())).toBe(1);
-  });
-
-  it("counts zero for a single weekend day", () => {
-    expect(countWorkingDays(pd("2024-01-06"), pd("2024-01-06"), new Set())).toBe(0);
-  });
-
-  it("counts two full weeks correctly (10 weekdays)", () => {
-    // Mon Jan 1 through Sun Jan 14 → 10 weekdays
-    expect(countWorkingDays(pd("2024-01-01"), pd("2024-01-14"), new Set())).toBe(10);
-  });
-});
-
 describe("countWorkingDaysByLocation", () => {
   it("allocates all working days to single location", () => {
     // Mon Jan 1 – Fri Jan 5 = 5 weekdays, all in NY
@@ -60,6 +48,7 @@ describe("countWorkingDaysByLocation", () => {
       pd("2024-01-05"),
       workIntervals,
       [],
+      emptyRules(workIntervals),
     );
     expect(result.totalWorkingDays).toBe(5);
     expect(result.daysByLocation["US-NY"]).toBe(5);
@@ -78,6 +67,7 @@ describe("countWorkingDaysByLocation", () => {
       pd("2024-01-14"),
       workIntervals,
       [],
+      emptyRules(workIntervals),
     );
     expect(result.totalWorkingDays).toBe(10);
     expect(result.daysByLocation["US-NY"]).toBe(5);
@@ -97,6 +87,7 @@ describe("countWorkingDaysByLocation", () => {
       pd("2024-01-05"),
       workIntervals,
       nonWorking,
+      emptyRules(workIntervals, nonWorking),
     );
     expect(result.totalWorkingDays).toBe(4);
     expect(result.daysByLocation["US-NY"]).toBe(4);
@@ -115,6 +106,7 @@ describe("countWorkingDaysByLocation", () => {
       pd("2024-01-05"),
       workIntervals,
       nonWorking,
+      emptyRules(workIntervals, nonWorking),
     );
     // Mon, Tue, Fri = 3 working days
     expect(result.totalWorkingDays).toBe(3);
@@ -131,6 +123,7 @@ describe("countWorkingDaysByLocation", () => {
       pd("2024-01-01"),
       workIntervals,
       [],
+      emptyRules(workIntervals),
     );
     expect(result.totalWorkingDays).toBe(1);
     expect(result.daysByLocation["US-NY"]).toBe(1);
@@ -146,6 +139,7 @@ describe("countWorkingDaysByLocation", () => {
       pd("2024-01-05"),
       workIntervals,
       [],
+      emptyRules(workIntervals),
     );
     expect(result.totalWorkingDays).toBe(5);
   });
@@ -156,11 +150,17 @@ describe("countWorkingDaysByLocation", () => {
       { start: pd("2024-01-03"), end: pd("2024-01-07"), location: "US-CA" },
     ];
     expect(() =>
-      countWorkingDaysByLocation(pd("2024-01-01"), pd("2024-01-07"), workIntervals, []),
+      countWorkingDaysByLocation(
+        pd("2024-01-01"),
+        pd("2024-01-07"),
+        workIntervals,
+        [],
+        emptyRules(workIntervals),
+      ),
     ).toThrow(/Overlapping work intervals/);
   });
 
-  it("treats uncovered working days as non-NY", () => {
+  it("treats uncovered working days as unattributed", () => {
     // Only cover Mon–Wed, but window goes to Fri.
     // Thu/Fri still count in the denominator, but not in any location bucket.
     const workIntervals: WorkInterval[] = [
@@ -171,6 +171,7 @@ describe("countWorkingDaysByLocation", () => {
       pd("2024-01-05"),
       workIntervals,
       [],
+      emptyRules(workIntervals),
     );
     expect(result.totalWorkingDays).toBe(5);
     expect(result.daysByLocation["US-NY"]).toBe(3);
@@ -186,6 +187,7 @@ describe("countWorkingDaysByLocation", () => {
       pd("2024-01-07"),
       workIntervals,
       [],
+      emptyRules(workIntervals),
     );
     expect(result.totalWorkingDays).toBe(5);
   });
@@ -204,6 +206,7 @@ describe("countWorkingDaysByLocation", () => {
       pd("2024-01-05"),
       workIntervals,
       nonWorking,
+      emptyRules(workIntervals, nonWorking),
     );
     expect(result.totalWorkingDays).toBe(4);
     expect(result.daysByLocation["US-NY"]).toBe(4);
@@ -220,6 +223,7 @@ describe("countWorkingDaysByLocation", () => {
       pd("2024-01-05"),
       workIntervals,
       [],
+      emptyRules(workIntervals),
     );
     expect(result.totalWorkingDays).toBe(5);
     expect(result.daysByLocation["US-NY"]).toBe(5);
@@ -235,6 +239,7 @@ describe("countWorkingDaysByLocation", () => {
       pd("2024-01-06"),
       workIntervals,
       [],
+      emptyRules(workIntervals),
     );
     expect(result.totalWorkingDays).toBe(0);
   });
@@ -246,7 +251,13 @@ describe("countWorkingDaysByLocation", () => {
       { start: pd("2024-01-05"), end: pd("2024-01-07"), location: "US-NY" },
     ];
     expect(() =>
-      countWorkingDaysByLocation(pd("2024-01-01"), pd("2024-01-07"), workIntervals, []),
+      countWorkingDaysByLocation(
+        pd("2024-01-01"),
+        pd("2024-01-07"),
+        workIntervals,
+        [],
+        emptyRules(workIntervals),
+      ),
     ).toThrow(/Overlapping work intervals/);
   });
 });

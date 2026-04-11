@@ -79,7 +79,13 @@ export interface EsppSaleAllocation {
   ordinaryIncome: number;
   /** Discount per share: FMV at purchase − purchase price. */
   discountPerShare: number;
-  /** Working-day counts during the offering period, by location. */
+  /**
+   * Working-day counts during the offering period, by claiming state.
+   *
+   * A single day may appear in multiple state buckets (domicile, statutory
+   * residence, and/or non-resident sourcing state), so values may sum to
+   * more than totalDays.
+   */
   daysByLocation: Record<string, number>;
   /** Total working days in the offering period (offering start → purchase date, inclusive). */
   totalDays: number;
@@ -94,12 +100,55 @@ export interface EsppSaleAllocation {
  *   NY salary = total compensation × (NY working days / total working days)
  * where non-working days (weekends, holidays, vacation, sick, leave) are
  * excluded from both numerator and denominator.
+ *
+ * With state rules applied, a single day may be claimed by multiple states,
+ * so fractions may sum to more than 1.0.
  */
 export interface SalaryAllocation {
   year: number;
   daysByLocation: Record<string, number>;
   totalDays: number;
   fractionByLocation: Record<string, number>;
+}
+
+// ── State tax rules ─────────────────────────────────────────────────
+
+/**
+ * A reporting event records that a state had taxable income reported in a
+ * given year (e.g. a W-2 or 1099 was filed listing that state).
+ */
+export interface ReportingEvent {
+  year: number;
+  /** ISO 3166-2 subdivision, e.g. "US-NY". */
+  state: string;
+}
+
+/**
+ * A period of domicile in a state.
+ *
+ * The taxpayer is treated as a resident of this state for the duration of
+ * the interval. All income earned during this period — regardless of where
+ * the work was physically performed — is taxable by this state.
+ */
+export interface DomicileInterval {
+  start: Temporal.PlainDate;
+  /** Inclusive end date. */
+  end: Temporal.PlainDate;
+  /** ISO 3166-2 subdivision, e.g. "US-NY". */
+  state: string;
+}
+
+/**
+ * Statutory residence triggered for a full tax year.
+ *
+ * If a state's statutory-residence test is met (e.g. 183-day + permanent
+ * place of abode), all income for that year is taxable by this state,
+ * regardless of sourcing.
+ */
+export interface StatutoryResidence {
+  year: number;
+  /** ISO 3166-2 subdivision, e.g. "US-NY". */
+  state: string;
 }
 
 // ── Inputs & outputs ────────────────────────────────────────────────
@@ -110,7 +159,13 @@ export interface InputData {
   esppSales?: EsppSale[];
   workIntervals: WorkInterval[];
   /** Days off (holidays, vacation, sick, leave). Weekdays in these intervals are excluded from both numerator and denominator. */
-  nonWorkingIntervals?: NonWorkingInterval[];
+  nonWorkingIntervals: NonWorkingInterval[];
+  /** Per-year reporting events — states where income was reported on a W-2 or 1099. */
+  reportingEvents: ReportingEvent[];
+  /** Periods of domicile in each state. */
+  domicileIntervals: DomicileInterval[];
+  /** States where statutory residence was triggered for a full year. */
+  statutoryResidences: StatutoryResidence[];
 }
 
 export type FileMap = ReadonlyMap<string, string>;
@@ -132,6 +187,10 @@ export interface VestAllocation {
   shares: number;
   fmvPerShare: number;
   income: number;
+  /**
+   * Working-day counts by claiming state. A single day may appear in
+   * multiple state buckets, so values may sum to more than totalDays.
+   */
   daysByLocation: Record<string, number>;
   totalDays: number;
   fractionByLocation: Record<string, number>;
@@ -142,7 +201,7 @@ export interface TaxYearSummary {
   taxYear: number;
   vestAllocations: VestAllocation[];
   esppSaleAllocations: EsppSaleAllocation[];
-  /** Weighted by income, not by share count. */
+  /** Weighted by income, not by share count. Fractions may sum to >1.0. */
   weightedFractionByLocation: Record<string, number>;
   totalShares: number;
   totalIncome: number;

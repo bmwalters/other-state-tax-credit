@@ -97,6 +97,17 @@ function printSummary(summaries: TaxYearSummary[], showDetailVests: boolean): vo
     console.log(
       `${"TOTAL".padEnd(10)} ${"".padEnd(12)} ${String(summary.totalShares).padStart(8)} ${"".padStart(10)} ${formatDollar(summary.totalIncome).padStart(14)}  ${totalLocCols}`,
     );
+
+    // ── Warn if fractions exceed 100% (multi-state exposure) ──
+    const totalFraction = Object.values(summary.weightedFractionByLocation).reduce(
+      (s, f) => s + f,
+      0,
+    );
+    if (totalFraction > 1.005) {
+      console.log(`\n  ** State fractions sum to ${formatPercent(totalFraction)} (>100%).`);
+      console.log("     Multiple states claim the same income (domicile + statutory residence +");
+      console.log("     non-resident sourcing). Credits may or may not be available.");
+    }
   }
 }
 
@@ -104,12 +115,8 @@ function printSalaryAllocations(allocations: SalaryAllocation[]): void {
   if (allocations.length === 0) return;
 
   console.log("\n\n=== Salary Allocation (20 NYCRR §132.18) ===");
-  console.log(
-    "Apply these fractions to your non-equity W-2 compensation (salary,",
-  );
-  console.log(
-    "bonus, taxable fringe benefits, etc. — excluding the RSU/ESPP ordinary",
-  );
+  console.log("Apply these fractions to your non-equity W-2 compensation (salary,");
+  console.log("bonus, taxable fringe benefits, etc. — excluding the RSU/ESPP ordinary");
   console.log("income reported above).\n");
 
   const allLocations = [
@@ -118,9 +125,7 @@ function printSalaryAllocations(allocations: SalaryAllocation[]): void {
 
   const header =
     `${"Year".padEnd(6)} ${"Work Days".padStart(10)}  ` +
-    allLocations
-      .map((l) => `${(l + " days").padStart(10)} ${(l + " %").padStart(10)}`)
-      .join("  ");
+    allLocations.map((l) => `${(l + " days").padStart(10)} ${(l + " %").padStart(10)}`).join("  ");
   console.log(header);
   console.log("-".repeat(header.length));
 
@@ -132,6 +137,16 @@ function printSalaryAllocations(allocations: SalaryAllocation[]): void {
       )
       .join("  ");
     console.log(`${String(a.year).padEnd(6)} ${String(a.totalDays).padStart(10)}  ${locCols}`);
+  }
+
+  // Warn on multi-state overlap
+  for (const a of allocations) {
+    const totalFraction = Object.values(a.fractionByLocation).reduce((s, f) => s + f, 0);
+    if (totalFraction > 1.005) {
+      console.log(
+        `\n  ** ${a.year}: fractions sum to ${formatPercent(totalFraction)} — multiple states claim the same days.`,
+      );
+    }
   }
 }
 
