@@ -1,31 +1,55 @@
-# Multi-State RSU/ESPP Income Calculator
+# other-state-tax-credit
+
+Apportions income and prorates equity compensation to enable calculating **Other-State Tax Credits**.
 
 ## Background
 
-When you work in multiple US states, each state may claim the right to tax
-your equity compensation. This program computes how income from RSU vests and
-ESPP sales is allocated across states based on where you physically worked.
+When you work in multiple US states, each state may independently claim the
+right to tax your equity compensation. Filing requires knowing, for each
+state, how much income it can tax and in what capacity — resident (worldwide
+income) or nonresident (sourced income only). Part-year residents must split
+income between the portion of the year they were resident and the portion they
+were not. Where two states tax the same dollar, the overlap is resolved
+through other-state tax credits (OSTCs), which require the dollar amount of
+income sourced to each nonresident state.
 
-For RSU vests, income is allocated using the working-day fraction over the
-grant-to-vest window per
-[NYS Regulation Section 132.18(a)](https://www.law.cornell.edu/regulations/new-york/20-NYCRR-132.18),
+Due to state statutes and regulations, Box 16 ("State wages, tips, etc.") of
+Form W-2 often contains an **overestimate** of state tax liability. This
+program intends to compute corrected figures. It takes your RSU vesting
+schedules, ESPP purchase/sale records, work-location history, and domicile
+timeline, then produces per-state income split by filing status (resident vs.
+nonresident) along with the cross-state amounts needed for OSTC worksheets.
+
+Salary and other non-equity W-2 compensation is prorated by working-day
+fraction over each calendar year. RSU income is allocated over the grant-to-vest
+window, and ESPP ordinary income over the offering period (offering start
+through purchase date), per
+[20 NYCRR Section 132.18(a)](https://www.law.cornell.edu/regulations/new-york/20-NYCRR-132.18),
 [TSB-M07(7)I](https://www.tax.ny.gov/pdf/memos/income/m07_7i.pdf), and
 [Instructions for Form IT-203-F](https://www.tax.ny.gov/pdf/current_forms/it/it203fi.pdf).
 
-For ESPP sales, ordinary income is allocated using the working-day fraction
-over the offering period (offering start → purchase date).
+### Multi-state claiming
 
-### Multi-state taxation
+Each working day's income is claimed by the **union** of your **domicile
+state** on that date, any **statutory residence** states for that year, and the
+**physical work location** (non-resident sourcing) — unless that location is
+suppressed. State taxable income may therefore sum to more than 100% of federal amount when multiple
+states independently claim the same income.
 
-Each working day's income is claimed by the **union** of:
+### Resident vs. nonresident classification
 
-- Your **domicile state** on that date (taxes all income earned while domiciled)
-- Any **statutory residence** states for that year (tax all income for the year)
-- The **physical work location** (non-resident sourcing) — unless suppressed
+For each claiming state, the program classifies the income as either
+**resident** (the taxpayer was domiciled there or had statutory residence at
+the income recognition date) or **nonresident** (the state's claim arises
+solely from the physical work location). A single state can appear in both
+categories within the same tax year if residency changes mid-year — for
+example, an RSU vesting while domiciled in NY produces resident NY income,
+while a later vest after moving to CA produces nonresident NY source income.
 
-This means the state fractions may **sum to more than 100%** when multiple
-states independently claim the same income (e.g. domicile CA + statutory
-resident NY + physically working in NJ).
+The OSTC section cross-references every (resident state, nonresident state)
+pair and reports the income amounts: "while resident of CA, $X of RSU income
+was sourced to NY." These are the figures that go on the resident state's
+OSTC worksheet.
 
 ### Suppression rules
 
@@ -36,7 +60,7 @@ A physical work location is suppressed (excluded from the claiming states) when:
    you cannot file there regardless.
 
 2. **De minimis exception** — Fewer than 10 work days in the state for the
-   year AND no reporting event (W-2/1099) was filed for that state.
+   year AND no **new** reporting event (W-2/1099) was filed for that state.
    Suppressed only when **one or fewer** residence states claim the income.
    When multiple residence states claim it, the de minimis state is kept so
    the taxpayer can file there and obtain credits to offset the otherwise
@@ -48,12 +72,12 @@ A physical work location is suppressed (excluded from the claiming states) when:
   In particular, remote days worked outside New York for your own convenience
   may still need to be entered as `US-NY` under the convenience-of-the-employer rule.
 - Normal work days spent at home may need to be entered as `US-NY` if your assigned office is in New York.
-- Limitation: weekend work (for example, Sunday travel or Saturday meetings) is not yet modeled; weekends are always excluded.
+- Weekend work (for example, Sunday travel or Saturday meetings) is not yet modeled; weekends are always excluded.
 - Schwab import: the CSV export is missing data; use API JSON instead.
 
 ## Usage
 
-1. Create and enter a data directory, e.g. `my-rsus/`
+1. Create and enter a data directory, e.g. `my-data/`
 1. Sign in to Schwab
 1. Navigate to Accounts > Equity Awards > [View Equity Details](https://client.schwab.com/app/accounts/equityawards/#/equityTodayView)
 1. Download Awards.json from https://ausgateway.schwab.com/api/is.EacDashboardWeb/v1/Awards?Type=All&EsppData=True&AllowFullDetails=true&IsHistoricalAwards=true&PendingTransactions=true
@@ -113,6 +137,6 @@ A physical work location is suppressed (excluded from the claiming states) when:
 
 1. Any working weekday not covered by `work-location.csv` is treated as
    uncovered — it still counts in the denominator but is not attributed to
-   any physical work state. Overlapping work-location intervals are errors.
+   any physical work state (to enable lightweight usage to figure income _not_ sourced to your sole domiciled state). Overlapping work-location intervals are errors.
 
 1. `npm run dev -- /path/to/data/`

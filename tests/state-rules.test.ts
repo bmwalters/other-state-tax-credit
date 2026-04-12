@@ -601,8 +601,9 @@ describe("computeSalaryAllocations with state rules", () => {
     const result = computeSalaryAllocations(input);
     expect(result).toHaveLength(1);
     // NJ had 3 days, no reporting event, single residence → suppressed
-    expect(result[0].daysByLocation["US-NJ"]).toBeUndefined();
-    expect(result[0].daysByLocation["US-NY"]).toBe(262);
+    expect(result[0].nonresidentDaysByState["US-NJ"]).toBeUndefined();
+    // NY gets all 262 as resident (domicile)
+    expect(result[0].residentDaysByState["US-NY"]).toBe(262);
   });
 
   it("de minimis NOT suppressed for salary with multi-residence", () => {
@@ -619,10 +620,44 @@ describe("computeSalaryAllocations with state rules", () => {
 
     const result = computeSalaryAllocations(input);
     expect(result).toHaveLength(1);
-    // NJ kept (2 residence states → credit opportunity)
-    expect(result[0].daysByLocation["US-NJ"]).toBe(3);
-    expect(result[0].daysByLocation["US-CA"]).toBe(262); // domicile: all days
-    expect(result[0].daysByLocation["US-NY"]).toBe(262); // statutory + physical
+    // NJ kept (2 residence states → credit opportunity), nonresident
+    expect(result[0].nonresidentDaysByState["US-NJ"]).toBe(3);
+    // CA: all 262 as resident (domicile)
+    expect(result[0].residentDaysByState["US-CA"]).toBe(262);
+    // NY: all 262 as resident (statutory)
+    expect(result[0].residentDaysByState["US-NY"]).toBe(262);
+  });
+
+  it("splits salary days into resident and nonresident with cross-state tracking", () => {
+    // Domiciled in UT Jan-Jun, move to CA Jul onwards.
+    // Physically work in CA some days while domiciled in UT (nonresident CA).
+    const input: InputData = {
+      ...EMPTY_STATE_RULES,
+      grants: [],
+      workIntervals: [
+        { start: pd("2024-01-01"), end: pd("2024-01-05"), location: "US-CA" }, // 5 days in CA while UT resident
+        { start: pd("2024-01-08"), end: pd("2024-06-28"), location: "US-UT" },
+        { start: pd("2024-07-01"), end: pd("2024-12-31"), location: "US-CA" },
+      ],
+      domicileIntervals: [
+        { start: pd("2024-01-01"), end: pd("2024-06-30"), state: "US-UT" },
+        { start: pd("2024-07-01"), end: pd("2024-12-31"), state: "US-CA" },
+      ],
+    };
+
+    const result = computeSalaryAllocations(input);
+    expect(result).toHaveLength(1);
+
+    // CA: 5 nonresident days (Jan 1-5, domiciled in UT) + some resident days (Jul–Dec)
+    expect(result[0].nonresidentDaysByState["US-CA"]).toBe(5);
+    expect(result[0].residentDaysByState["US-CA"]).toBeGreaterThan(0);
+
+    // UT: resident days (Jan 8–Jun 28, domiciled in UT), no nonresident
+    expect(result[0].residentDaysByState["US-UT"]).toBeGreaterThan(0);
+    expect(result[0].nonresidentDaysByState["US-UT"]).toBeUndefined();
+
+    // Cross-state: while UT-domiciled, 5 days worked in CA (nonresident)
+    expect(result[0].crossStateSourceDays["US-UT"]?.["US-CA"]).toBe(5);
   });
 });
 
@@ -749,7 +784,7 @@ describe("computeAllocations – part-year domicile RSU", () => {
 
     // CA is domicile at vest date (2024-06-01) → 100%
     expect(alloc.fractionByLocation["US-CA"]).toBeCloseTo(1.0);
-    expect(alloc.incomeByLocation["US-CA"]).toBeCloseTo(5000);
+    expect(alloc.residentIncomeByState["US-CA"]).toBeCloseTo(5000);
 
     // GA gets its nonresident source fraction (days physically in GA / total)
     const gaDays = alloc.daysByLocation["US-GA"]!;
@@ -916,12 +951,12 @@ describe("computeAllocations – part-year domicile ESPP", () => {
 
     // CA is domicile at sale date (Sep 1, 2024) → 100%
     expect(alloc.fractionByLocation["US-CA"]).toBeCloseTo(1.0);
-    expect(alloc.ordinaryIncomeByLocation["US-CA"]).toBeCloseTo(750); // 7.5 * 100
+    expect(alloc.residentOrdinaryIncomeByState["US-CA"]).toBeCloseTo(750); // 7.5 * 100
 
     // GA gets 100% as nonresident source — entire offering period was in GA.
     // Both GA and CA claim the full income; OSTC resolves the overlap.
     expect(alloc.fractionByLocation["US-GA"]).toBeCloseTo(1.0);
-    expect(alloc.ordinaryIncomeByLocation["US-GA"]).toBeCloseTo(750);
+    expect(alloc.nonresidentOrdinaryIncomeByState["US-GA"]).toBeCloseTo(750);
   });
 
   it("sale before move-in: new state gets no ESPP claim", () => {
@@ -1020,5 +1055,192 @@ describe("computeAllocations – part-year domicile ESPP", () => {
     expect(alloc.daysByLocation["US-GA"]).toBe(65);
     // CA days = totalWorkingDays from resident override (not just source days)
     expect(alloc.daysByLocation["US-CA"]).toBe(alloc.totalDays);
+  });
+});
+
+// ── Resident vs. nonresident income split ───────────────────────────
+
+describe("resident/nonresident income split – RSU", () => {
+  it("no domicile/statutory → all income is nonresident", () => {
+    const input: InputData = {
+      ...EMPTY_STATE_RULES,
+      grants: [
+        {
+          id: "G1",
+          awardDate: pd("2024-01-01"),
+          symbol: "XYZ",
+          vests: [{ date: pd("2024-07-01"), shares: 100, fmvPerShare: 50 }],
+        },
+      ],
+      workIntervals: [{ start: pd("2024-01-01"), end: pd("2024-12-31"), location: "US-NY" }],
+    };
+
+    const result = computeAllocations(input);
+    const alloc = result[0].vestAllocations[0];
+    expect(alloc.nonresidentIncomeByState["US-NY"]).toBeCloseTo(5000);
+    expect(alloc.residentIncomeByState["US-NY"]).toBeUndefined();
+
+    // Summary level
+    expect(result[0].totalNonresidentIncomeByState["US-NY"]).toBeCloseTo(5000);
+    expect(result[0].totalResidentIncomeByState["US-NY"]).toBeUndefined();
+  });
+
+  it("domicile at vest → resident income; other source state → nonresident", () => {
+    // Grant in GA, move to CA, vest in CA (domicile). GA is nonresident source.
+    const input: InputData = {
+      ...EMPTY_STATE_RULES,
+      grants: [
+        {
+          id: "G1",
+          awardDate: pd("2024-01-01"),
+          symbol: "XYZ",
+          vests: [{ date: pd("2024-07-01"), shares: 100, fmvPerShare: 50 }],
+        },
+      ],
+      workIntervals: [
+        { start: pd("2024-01-01"), end: pd("2024-03-31"), location: "US-GA" },
+        { start: pd("2024-04-01"), end: pd("2024-12-31"), location: "US-CA" },
+      ],
+      domicileIntervals: [
+        { start: pd("2024-01-01"), end: pd("2024-03-31"), state: "US-GA" },
+        { start: pd("2024-04-01"), end: pd("2024-12-31"), state: "US-CA" },
+      ],
+    };
+
+    const result = computeAllocations(input);
+    const alloc = result[0].vestAllocations[0];
+
+    // CA is domicile at vest date → 100% as resident
+    expect(alloc.residentIncomeByState["US-CA"]).toBeCloseTo(5000);
+    expect(alloc.nonresidentIncomeByState["US-CA"]).toBeUndefined();
+
+    // GA is nonresident source only
+    const gaIncome = alloc.nonresidentIncomeByState["US-GA"]!;
+    expect(gaIncome).toBeGreaterThan(0);
+    expect(gaIncome).toBeLessThan(5000);
+    expect(alloc.residentIncomeByState["US-GA"]).toBeUndefined();
+  });
+
+  it("domicile + statutory residence → both are resident", () => {
+    const input: InputData = {
+      ...EMPTY_STATE_RULES,
+      grants: [
+        {
+          id: "G1",
+          awardDate: pd("2024-01-01"),
+          symbol: "XYZ",
+          vests: [{ date: pd("2024-01-05"), shares: 100, fmvPerShare: 10 }],
+        },
+      ],
+      workIntervals: [{ start: pd("2024-01-01"), end: pd("2024-01-05"), location: "US-NY" }],
+      domicileIntervals: [{ start: pd("2024-01-01"), end: pd("2024-12-31"), state: "US-CA" }],
+      statutoryResidences: [{ year: 2024, state: "US-NY" }],
+    };
+
+    const result = computeAllocations(input);
+    const alloc = result[0].vestAllocations[0];
+
+    // Both CA (domicile) and NY (statutory) are resident → 100% each
+    expect(alloc.residentIncomeByState["US-CA"]).toBeCloseTo(1000);
+    expect(alloc.residentIncomeByState["US-NY"]).toBeCloseTo(1000);
+    expect(alloc.nonresidentIncomeByState["US-CA"]).toBeUndefined();
+    expect(alloc.nonresidentIncomeByState["US-NY"]).toBeUndefined();
+  });
+
+  it("mid-year move: same state is resident for one vest, nonresident for another", () => {
+    // Domiciled in NY Jan–Jun, move to CA Jul onwards.
+    // Vest 1 in March (NY domicile → NY resident).
+    // Vest 2 in September (CA domicile → NY is nonresident source only).
+    const input: InputData = {
+      ...EMPTY_STATE_RULES,
+      grants: [
+        {
+          id: "G1",
+          awardDate: pd("2024-01-01"),
+          symbol: "XYZ",
+          vests: [
+            { date: pd("2024-03-15"), shares: 100, fmvPerShare: 10 },
+            { date: pd("2024-09-15"), shares: 100, fmvPerShare: 10 },
+          ],
+        },
+      ],
+      workIntervals: [{ start: pd("2024-01-01"), end: pd("2024-12-31"), location: "US-NY" }],
+      domicileIntervals: [
+        { start: pd("2024-01-01"), end: pd("2024-06-30"), state: "US-NY" },
+        { start: pd("2024-07-01"), end: pd("2024-12-31"), state: "US-CA" },
+      ],
+    };
+
+    const result = computeAllocations(input);
+    const summary = result[0];
+
+    // Vest 1 (March 15): NY is domicile → resident
+    const vest1 = summary.vestAllocations[0];
+    expect(vest1.residentIncomeByState["US-NY"]).toBeCloseTo(1000);
+    expect(vest1.nonresidentIncomeByState["US-NY"]).toBeUndefined();
+
+    // Vest 2 (Sep 15): CA is domicile → CA resident, NY nonresident source
+    const vest2 = summary.vestAllocations[1];
+    expect(vest2.residentIncomeByState["US-CA"]).toBeCloseTo(1000);
+    expect(vest2.nonresidentIncomeByState["US-NY"]).toBeCloseTo(1000);
+
+    // Summary: NY appears in BOTH maps (resident from vest 1, nonresident from vest 2)
+    expect(summary.totalResidentIncomeByState["US-NY"]).toBeCloseTo(1000);
+    expect(summary.totalNonresidentIncomeByState["US-NY"]).toBeCloseTo(1000);
+    expect(summary.totalResidentIncomeByState["US-CA"]).toBeCloseTo(1000);
+  });
+});
+
+describe("resident/nonresident income split – ESPP", () => {
+  it("domicile at sale date → resident; source state → nonresident", () => {
+    const input: InputData = {
+      ...EMPTY_STATE_RULES,
+      grants: [],
+      esppPurchases: [
+        {
+          id: "ESPP1",
+          symbol: "XYZ",
+          offeringStartDate: pd("2024-01-01"),
+          fmvPerShareAtGrant: 50,
+          purchaseDate: pd("2024-07-01"),
+          purchasePricePerShare: 42.5,
+          fmvPerShareAtPurchase: 50,
+          shares: 100,
+        },
+      ],
+      esppSales: [
+        {
+          purchaseId: "ESPP1",
+          saleDate: pd("2024-09-01"),
+          salePricePerShare: 55,
+          shares: 100,
+          dispositionType: "DISQUALIFIED",
+        },
+      ],
+      workIntervals: [
+        { start: pd("2024-01-01"), end: pd("2024-03-31"), location: "US-GA" },
+        { start: pd("2024-04-01"), end: pd("2024-12-31"), location: "US-CA" },
+      ],
+      domicileIntervals: [
+        { start: pd("2024-01-01"), end: pd("2024-03-31"), state: "US-GA" },
+        { start: pd("2024-04-01"), end: pd("2024-12-31"), state: "US-CA" },
+      ],
+    };
+
+    const result = computeAllocations(input);
+    const alloc = result[0].esppSaleAllocations[0];
+
+    // CA: domicile at sale date → resident, 100% = $750
+    expect(alloc.residentOrdinaryIncomeByState["US-CA"]).toBeCloseTo(750);
+    expect(alloc.nonresidentOrdinaryIncomeByState["US-CA"]).toBeUndefined();
+
+    // GA: nonresident source only (offering period days in GA)
+    const gaIncome = alloc.nonresidentOrdinaryIncomeByState["US-GA"]!;
+    expect(gaIncome).toBeGreaterThan(0);
+    expect(alloc.residentOrdinaryIncomeByState["US-GA"]).toBeUndefined();
+
+    // Summary level
+    expect(result[0].totalResidentIncomeByState["US-CA"]).toBeCloseTo(750);
+    expect(result[0].totalNonresidentIncomeByState["US-GA"]).toBeCloseTo(gaIncome);
   });
 });

@@ -12,10 +12,16 @@ import type {
   Vest,
   WorkInterval,
 } from "./types.ts";
-import { countWorkingDaysByLocation } from "./workdays.ts";
+import {
+  buildDayLocationMap,
+  buildNonWorkingSet,
+  countWorkingDaysByLocation,
+  isWeekday,
+} from "./workdays.ts";
 import {
   buildStateRulesConfig,
   getResidentStates,
+  resolveClaimingStates,
   resolveNonresidentSourceStates,
   type StateRulesConfig,
 } from "./state-rules.ts";
@@ -42,18 +48,26 @@ function allocateVest(
   //    or a statutory resident at the vest date (the income recognition
   //    date) claim 100% of the income — the "worldwide income" rule.
   //    (FTB Pub. 1100 §D–E; Example 14)
-  for (const state of getResidentStates(vest.date, stateRulesConfig)) {
+  const residentStates = new Set(getResidentStates(vest.date, stateRulesConfig));
+  for (const state of residentStates) {
     daysByLocation[state] = totalWorkingDays;
   }
 
   const fractionByLocation: Record<string, number> = {};
-  const incomeByLocation: Record<string, number> = {};
+  const residentIncomeByState: Record<string, number> = {};
+  const nonresidentIncomeByState: Record<string, number> = {};
   const income = vest.shares * vest.fmvPerShare;
 
   for (const [loc, days] of Object.entries(daysByLocation)) {
     const frac = totalWorkingDays > 0 ? days / totalWorkingDays : 0;
     fractionByLocation[loc] = frac;
-    incomeByLocation[loc] = income * frac;
+    const locIncome = income * frac;
+
+    if (residentStates.has(loc)) {
+      residentIncomeByState[loc] = locIncome;
+    } else {
+      nonresidentIncomeByState[loc] = locIncome;
+    }
   }
 
   return {
@@ -65,7 +79,8 @@ function allocateVest(
     daysByLocation,
     totalDays: totalWorkingDays,
     fractionByLocation,
-    incomeByLocation,
+    residentIncomeByState,
+    nonresidentIncomeByState,
   };
 }
 
@@ -123,7 +138,8 @@ function allocateEsppSale(
 
   // 2. Apply resident override at the sale date (the recognition date
   //    for ESPP ordinary income). Resident states claim 100%.
-  for (const state of getResidentStates(sale.saleDate, stateRulesConfig)) {
+  const residentStates = new Set(getResidentStates(sale.saleDate, stateRulesConfig));
+  for (const state of residentStates) {
     daysByLocation[state] = totalWorkingDays;
   }
 
@@ -131,12 +147,19 @@ function allocateEsppSale(
   const ordinaryIncome = computeEsppOrdinaryIncome(purchase, sale);
 
   const fractionByLocation: Record<string, number> = {};
-  const ordinaryIncomeByLocation: Record<string, number> = {};
+  const residentOrdinaryIncomeByState: Record<string, number> = {};
+  const nonresidentOrdinaryIncomeByState: Record<string, number> = {};
 
   for (const [loc, days] of Object.entries(daysByLocation)) {
     const frac = totalWorkingDays > 0 ? days / totalWorkingDays : 0;
     fractionByLocation[loc] = frac;
-    ordinaryIncomeByLocation[loc] = ordinaryIncome * frac;
+    const locIncome = ordinaryIncome * frac;
+
+    if (residentStates.has(loc)) {
+      residentOrdinaryIncomeByState[loc] = locIncome;
+    } else {
+      nonresidentOrdinaryIncomeByState[loc] = locIncome;
+    }
   }
 
   return {
@@ -149,7 +172,8 @@ function allocateEsppSale(
     daysByLocation,
     totalDays: totalWorkingDays,
     fractionByLocation,
-    ordinaryIncomeByLocation,
+    residentOrdinaryIncomeByState,
+    nonresidentOrdinaryIncomeByState,
   };
 }
 
@@ -219,26 +243,24 @@ export function computeAllocations(input: InputData): TaxYearSummary[] {
       vestAllocations.reduce((s, v) => s + v.shares, 0) +
       esppSaleAllocations.reduce((s, e) => s + e.shares, 0);
 
-    const weightedFractionByLocation: Record<string, number> = {};
-    const totalIncomeByLocation: Record<string, number> = {};
+    const totalResidentIncomeByState: Record<string, number> = {};
+    const totalNonresidentIncomeByState: Record<string, number> = {};
 
     for (const va of vestAllocations) {
-      for (const [loc, frac] of Object.entries(va.fractionByLocation)) {
-        const weight = totalIncome > 0 ? va.income / totalIncome : 0;
-        weightedFractionByLocation[loc] = (weightedFractionByLocation[loc] ?? 0) + frac * weight;
+      for (const [loc, inc] of Object.entries(va.residentIncomeByState)) {
+        totalResidentIncomeByState[loc] = (totalResidentIncomeByState[loc] ?? 0) + inc;
       }
-      for (const [loc, locIncome] of Object.entries(va.incomeByLocation)) {
-        totalIncomeByLocation[loc] = (totalIncomeByLocation[loc] ?? 0) + locIncome;
+      for (const [loc, inc] of Object.entries(va.nonresidentIncomeByState)) {
+        totalNonresidentIncomeByState[loc] = (totalNonresidentIncomeByState[loc] ?? 0) + inc;
       }
     }
 
     for (const ea of esppSaleAllocations) {
-      for (const [loc, frac] of Object.entries(ea.fractionByLocation)) {
-        const weight = totalIncome > 0 ? ea.ordinaryIncome / totalIncome : 0;
-        weightedFractionByLocation[loc] = (weightedFractionByLocation[loc] ?? 0) + frac * weight;
+      for (const [loc, inc] of Object.entries(ea.residentOrdinaryIncomeByState)) {
+        totalResidentIncomeByState[loc] = (totalResidentIncomeByState[loc] ?? 0) + inc;
       }
-      for (const [loc, locIncome] of Object.entries(ea.ordinaryIncomeByLocation)) {
-        totalIncomeByLocation[loc] = (totalIncomeByLocation[loc] ?? 0) + locIncome;
+      for (const [loc, inc] of Object.entries(ea.nonresidentOrdinaryIncomeByState)) {
+        totalNonresidentIncomeByState[loc] = (totalNonresidentIncomeByState[loc] ?? 0) + inc;
       }
     }
 
@@ -246,10 +268,10 @@ export function computeAllocations(input: InputData): TaxYearSummary[] {
       taxYear,
       vestAllocations,
       esppSaleAllocations,
-      weightedFractionByLocation,
       totalShares,
       totalIncome,
-      totalIncomeByLocation,
+      totalResidentIncomeByState,
+      totalNonresidentIncomeByState,
     });
   }
 
@@ -260,21 +282,22 @@ export function computeAllocations(input: InputData): TaxYearSummary[] {
  * Compute calendar-year working-day allocations for salary sourcing.
  *
  * Per 20 NYCRR §132.18(a), salary (i.e. non-equity W-2 compensation) is
- * allocated to NY using a simple working-day fraction over the calendar year:
+ * allocated to a state using a simple working-day fraction over the calendar
+ * year:
  *
- *   NY salary = total salary × (NY working days / total working days)
+ *   state salary = total salary × (state working days / total working days)
  *
- * This is distinct from RSU/ESPP allocation, which uses grant→vest or
- * offering→purchase windows.
+ * Days are split into resident (domicile / statutory residence on that
+ * date) vs. nonresident (physical work location only). The cross-state
+ * source days track "days I physically worked in state B while being a
+ * resident of state A" — needed for other-state tax credit (OSTC)
+ * calculations.
  *
- * Fractions may sum to >1.0 because multiple states can independently
- * claim the same day's income.
- *
- * Computes one SalaryAllocation per calendar year that has any work-interval
- * coverage.
+ * Computes one SalaryAllocation per calendar year that has any
+ * work-interval coverage.
  */
 export function computeSalaryAllocations(input: InputData): SalaryAllocation[] {
-  const stateRulesConfig = buildStateRulesConfigFromInput(input);
+  const config = buildStateRulesConfigFromInput(input);
 
   if (input.workIntervals.length === 0) return [];
 
@@ -291,24 +314,46 @@ export function computeSalaryAllocations(input: InputData): SalaryAllocation[] {
     const janFirst = Temporal.PlainDate.from({ year, month: 1, day: 1 });
     const decLast = Temporal.PlainDate.from({ year, month: 12, day: 31 });
 
-    const { daysByLocation, totalWorkingDays } = countWorkingDaysByLocation(
-      janFirst,
-      decLast,
-      input.workIntervals,
-      input.nonWorkingIntervals,
-      stateRulesConfig,
-    );
+    const nonWorkingDays = buildNonWorkingSet(input.nonWorkingIntervals, janFirst, decLast);
+    const dayLocation = buildDayLocationMap(janFirst, decLast, input.workIntervals, nonWorkingDays);
 
-    const fractionByLocation: Record<string, number> = {};
-    for (const [loc, days] of Object.entries(daysByLocation)) {
-      fractionByLocation[loc] = totalWorkingDays > 0 ? days / totalWorkingDays : 0;
+    const residentDaysByState: Record<string, number> = {};
+    const nonresidentDaysByState: Record<string, number> = {};
+    const crossStateSourceDays: Record<string, Record<string, number>> = {};
+    let totalDays = 0;
+
+    let cursor = janFirst;
+    while (Temporal.PlainDate.compare(cursor, decLast) <= 0) {
+      const key = cursor.toString();
+      if (isWeekday(cursor) && !nonWorkingDays.has(key)) {
+        totalDays++;
+        const physicalLocation = dayLocation.get(key);
+        const claimingStates = resolveClaimingStates(cursor, physicalLocation, config);
+        const residentStates = new Set(getResidentStates(cursor, config));
+
+        for (const state of claimingStates) {
+          if (residentStates.has(state)) {
+            residentDaysByState[state] = (residentDaysByState[state] ?? 0) + 1;
+          } else {
+            nonresidentDaysByState[state] = (nonresidentDaysByState[state] ?? 0) + 1;
+            // Record cross-state: this nonresident day in `state` while
+            // being a resident of each `resState`.
+            for (const resState of residentStates) {
+              const bucket = (crossStateSourceDays[resState] ??= {});
+              bucket[state] = (bucket[state] ?? 0) + 1;
+            }
+          }
+        }
+      }
+      cursor = cursor.add({ days: 1 });
     }
 
     allocations.push({
       year,
-      daysByLocation,
-      totalDays: totalWorkingDays,
-      fractionByLocation,
+      totalDays,
+      residentDaysByState,
+      nonresidentDaysByState,
+      crossStateSourceDays,
     });
   }
 

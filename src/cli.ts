@@ -1,152 +1,273 @@
 import { loadDirectory } from "./input/index.ts";
 import { computeAllocations, computeSalaryAllocations } from "./engine.ts";
-import type { SalaryAllocation, TaxYearSummary } from "./types.ts";
-
-function formatPercent(n: number): string {
-  return (n * 100).toFixed(2) + "%";
-}
+import type {
+  EsppSaleAllocation,
+  SalaryAllocation,
+  TaxYearSummary,
+  VestAllocation,
+} from "./types.ts";
+import { NO_INCOME_TAX_STATES } from "./state-rules.ts";
 
 function formatDollar(n: number): string {
   return "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function printSummary(summaries: TaxYearSummary[], showDetailVests: boolean): void {
-  for (const summary of summaries) {
-    const locations = Object.keys(summary.weightedFractionByLocation);
+// ── Data helpers ────────────────────────────────────────────────────
 
-    console.log(`\n=== Tax Year ${summary.taxYear} ===`);
+/** Collect all states that have any claim in a tax year (summary + salary). */
+function allClaimingStates(
+  summary: TaxYearSummary,
+  salary: SalaryAllocation | undefined,
+): string[] {
+  const states = new Set<string>();
+  for (const s of Object.keys(summary.totalResidentIncomeByState)) states.add(s);
+  for (const s of Object.keys(summary.totalNonresidentIncomeByState)) states.add(s);
+  if (salary) {
+    for (const s of Object.keys(salary.residentDaysByState)) states.add(s);
+    for (const s of Object.keys(salary.nonresidentDaysByState)) states.add(s);
+  }
+  return [...states].sort();
+}
 
-    // ── RSU vest allocations ──
-    if (summary.vestAllocations.length > 0) {
-      console.log("\n--- RSU Vests ---");
-      const header =
-        `${"Grant".padEnd(10)} ${"Vest Date".padEnd(12)} ${"Shares".padStart(8)} ${"FMV".padStart(10)} ${"Income".padStart(14)}  ` +
-        locations.map((l) => `${(l + " %").padStart(10)} ${(l + " $").padStart(14)}`).join("  ");
-      console.log(header);
-      console.log("-".repeat(header.length));
+/** Filing status label for a state in a given year. */
+function filingStatus(
+  state: string,
+  summary: TaxYearSummary,
+  salary: SalaryAllocation | undefined,
+): string {
+  if (NO_INCOME_TAX_STATES.has(state)) return "No income tax";
 
-      if (showDetailVests) {
-        for (const va of summary.vestAllocations) {
-          const locCols = locations
-            .map(
-              (l) =>
-                `${formatPercent(va.fractionByLocation[l] ?? 0).padStart(10)} ${formatDollar(va.incomeByLocation[l] ?? 0).padStart(14)}`,
-            )
-            .join("  ");
-          console.log(
-            `${va.grantId.padEnd(10)} ${va.vestDate.toString().padEnd(12)} ${String(va.shares).padStart(8)} ${formatDollar(va.fmvPerShare).padStart(10)} ${formatDollar(va.income).padStart(14)}  ${locCols}`,
-          );
-        }
-      }
+  const hasResident =
+    (summary.totalResidentIncomeByState[state] ?? 0) !== 0 ||
+    (salary?.residentDaysByState[state] ?? 0) > 0;
+  const hasNonresident =
+    (summary.totalNonresidentIncomeByState[state] ?? 0) !== 0 ||
+    (salary?.nonresidentDaysByState[state] ?? 0) > 0;
 
-      // RSU vest totals
-      const vestShares = summary.vestAllocations.reduce((s, v) => s + v.shares, 0);
-      const vestIncome = summary.vestAllocations.reduce((s, v) => s + v.income, 0);
-      const vestIncomeByLocation: Record<string, number> = {};
-      for (const va of summary.vestAllocations) {
-        for (const [loc, inc] of Object.entries(va.incomeByLocation)) {
-          vestIncomeByLocation[loc] = (vestIncomeByLocation[loc] ?? 0) + inc;
-        }
-      }
-      const vestLocCols = locations
-        .map(
-          (l) =>
-            `${formatPercent(vestIncome > 0 ? (vestIncomeByLocation[l] ?? 0) / vestIncome : 0).padStart(10)} ${formatDollar(vestIncomeByLocation[l] ?? 0).padStart(14)}`,
-        )
-        .join("  ");
+  if (hasResident && hasNonresident) return "Part-Year Resident";
+  if (hasResident) return "Resident";
+  return "Nonresident";
+}
+
+/** Sum resident + nonresident RSU income for a state across all vests. */
+function vestResidentIncome(vests: VestAllocation[], state: string): number {
+  return vests.reduce((s, v) => s + (v.residentIncomeByState[state] ?? 0), 0);
+}
+function vestNonresidentIncome(vests: VestAllocation[], state: string): number {
+  return vests.reduce((s, v) => s + (v.nonresidentIncomeByState[state] ?? 0), 0);
+}
+
+/** Sum resident + nonresident ESPP income for a state across all sales. */
+function esppResidentIncome(sales: EsppSaleAllocation[], state: string): number {
+  return sales.reduce((s, e) => s + (e.residentOrdinaryIncomeByState[state] ?? 0), 0);
+}
+function esppNonresidentIncome(sales: EsppSaleAllocation[], state: string): number {
+  return sales.reduce((s, e) => s + (e.nonresidentOrdinaryIncomeByState[state] ?? 0), 0);
+}
+
+// ── Per-state section ───────────────────────────────────────────────
+
+function printStateSection(
+  state: string,
+  summary: TaxYearSummary,
+  salary: SalaryAllocation | undefined,
+): void {
+  const status = filingStatus(state, summary, salary);
+  console.log(`\n--- ${state} (${status}) ---`);
+
+  if (NO_INCOME_TAX_STATES.has(state)) {
+    console.log("  No filing required.");
+    return;
+  }
+
+  // Salary
+  if (salary) {
+    const resDays = salary.residentDaysByState[state] ?? 0;
+    const nrDays = salary.nonresidentDaysByState[state] ?? 0;
+    const totalDays = resDays + nrDays;
+    if (totalDays > 0) {
+      const parts: string[] = [];
+      if (resDays > 0) parts.push(`${resDays} resident`);
+      if (nrDays > 0) parts.push(`${nrDays} nonresident`);
       console.log(
-        `${"RSU Total".padEnd(10)} ${"".padEnd(12)} ${String(vestShares).padStart(8)} ${"".padStart(10)} ${formatDollar(vestIncome).padStart(14)}  ${vestLocCols}`,
+        `  Salary/wages:  ${totalDays} / ${salary.totalDays} days  (${parts.join(" + ")})`,
       );
     }
+  }
 
-    // ── ESPP sale allocations ──
-    if (summary.esppSaleAllocations.length > 0) {
-      console.log("\n--- ESPP Sales (Ordinary Income) ---");
-      const esppHeader =
-        `${"Purchase".padEnd(34)} ${"Sale Date".padEnd(12)} ${"Shares".padStart(8)} ${"Discount".padStart(10)} ${"Ord Income".padStart(14)}  ` +
-        locations.map((l) => `${(l + " %").padStart(10)} ${(l + " $").padStart(14)}`).join("  ");
-      console.log(esppHeader);
-      console.log("-".repeat(esppHeader.length));
+  // RSU vests
+  const rsuRes = vestResidentIncome(summary.vestAllocations, state);
+  const rsuNr = vestNonresidentIncome(summary.vestAllocations, state);
+  if (rsuRes > 0 || rsuNr > 0) {
+    if (rsuRes > 0) console.log(`  RSU vests (resident):               ${formatDollar(rsuRes)}`);
+    if (rsuNr > 0) console.log(`  RSU vests (nonresident source):      ${formatDollar(rsuNr)}`);
+  }
 
-      for (const ea of summary.esppSaleAllocations) {
-        const locCols = locations
-          .map(
-            (l) =>
-              `${formatPercent(ea.fractionByLocation[l] ?? 0).padStart(10)} ${formatDollar(ea.ordinaryIncomeByLocation[l] ?? 0).padStart(14)}`,
-          )
-          .join("  ");
-        console.log(
-          `${ea.purchaseId.padEnd(34)} ${ea.saleDate.toString().padEnd(12)} ${String(ea.shares).padStart(8)} ${formatDollar(ea.discountPerShare).padStart(10)} ${formatDollar(ea.ordinaryIncome).padStart(14)}  ${locCols}`,
-        );
+  // ESPP sales
+  const esppRes = esppResidentIncome(summary.esppSaleAllocations, state);
+  const esppNr = esppNonresidentIncome(summary.esppSaleAllocations, state);
+  if (esppRes > 0 || esppNr > 0) {
+    if (esppRes > 0) console.log(`  ESPP sales (resident):              ${formatDollar(esppRes)}`);
+    if (esppNr > 0) console.log(`  ESPP sales (nonresident source):     ${formatDollar(esppNr)}`);
+  }
+}
+
+// ── OSTC section ────────────────────────────────────────────────────
+
+interface OstcEntry {
+  residentState: string;
+  nonresidentState: string;
+  salaryDays: number;
+  salaryTotalDays: number;
+  rsuIncome: number;
+  esppIncome: number;
+}
+
+function computeOstcEntries(
+  summary: TaxYearSummary,
+  salary: SalaryAllocation | undefined,
+): OstcEntry[] {
+  // For each (residentState, nonresidentState) pair, compute the
+  // income that nonresidentState taxed on events where residentState
+  // was the taxpayer's resident state.
+
+  const map = new Map<string, OstcEntry>(); // key = "res|nr"
+
+  function getEntry(res: string, nr: string): OstcEntry {
+    const key = `${res}|${nr}`;
+    if (!map.has(key)) {
+      map.set(key, {
+        residentState: res,
+        nonresidentState: nr,
+        salaryDays: 0,
+        salaryTotalDays: salary?.totalDays ?? 0,
+        rsuIncome: 0,
+        esppIncome: 0,
+      });
+    }
+    return map.get(key)!;
+  }
+
+  // RSU: for each vest, cross-reference resident states with nonresident states
+  for (const va of summary.vestAllocations) {
+    for (const resState of Object.keys(va.residentIncomeByState)) {
+      for (const [nrState, nrIncome] of Object.entries(va.nonresidentIncomeByState)) {
+        getEntry(resState, nrState).rsuIncome += nrIncome;
       }
     }
+  }
 
-    // ── Totals ──
-    console.log("");
-    const divider =
-      `${"".padEnd(10)} ${"".padEnd(12)} ${"".padStart(8)} ${"".padStart(10)} ${"".padStart(14)}  ` +
-      locations.map((_l) => `${"".padStart(10)} ${"".padStart(14)}`).join("  ");
-    console.log("-".repeat(divider.length));
+  // ESPP: same pattern
+  for (const ea of summary.esppSaleAllocations) {
+    for (const resState of Object.keys(ea.residentOrdinaryIncomeByState)) {
+      for (const [nrState, nrIncome] of Object.entries(ea.nonresidentOrdinaryIncomeByState)) {
+        getEntry(resState, nrState).esppIncome += nrIncome;
+      }
+    }
+  }
 
-    const totalLocCols = locations
-      .map(
-        (l) =>
-          `${formatPercent(summary.weightedFractionByLocation[l] ?? 0).padStart(10)} ${formatDollar(summary.totalIncomeByLocation[l] ?? 0).padStart(14)}`,
-      )
-      .join("  ");
-    console.log(
-      `${"TOTAL".padEnd(10)} ${"".padEnd(12)} ${String(summary.totalShares).padStart(8)} ${"".padStart(10)} ${formatDollar(summary.totalIncome).padStart(14)}  ${totalLocCols}`,
-    );
+  // Salary: use crossStateSourceDays
+  if (salary) {
+    for (const [resState, sources] of Object.entries(salary.crossStateSourceDays)) {
+      for (const [nrState, days] of Object.entries(sources)) {
+        getEntry(resState, nrState).salaryDays += days;
+      }
+    }
+  }
 
-    // ── Warn if fractions exceed 100% (multi-state exposure) ──
-    const totalFraction = Object.values(summary.weightedFractionByLocation).reduce(
-      (s, f) => s + f,
-      0,
-    );
-    if (totalFraction > 1.005) {
-      console.log(`\n  ** State fractions sum to ${formatPercent(totalFraction)} (>100%).`);
-      console.log("     Multiple states claim the same income (domicile + statutory residence +");
-      console.log("     non-resident sourcing). Credits may or may not be available.");
+  return [...map.values()].filter((e) => e.salaryDays > 0 || e.rsuIncome > 0 || e.esppIncome > 0);
+}
+
+function printOstcSection(entries: OstcEntry[]): void {
+  if (entries.length === 0) return;
+
+  console.log("\n--- Other-State Tax Credit (OSTC) ---");
+
+  // Group by resident state
+  const byResident = new Map<string, OstcEntry[]>();
+  for (const e of entries) {
+    if (!byResident.has(e.residentState)) byResident.set(e.residentState, []);
+    byResident.get(e.residentState)!.push(e);
+  }
+
+  for (const [resState, stateEntries] of [...byResident.entries()].sort()) {
+    for (const e of stateEntries.sort((a, b) =>
+      a.nonresidentState.localeCompare(b.nonresidentState),
+    )) {
+      console.log(`\n  On ${resState} return, credit for taxes paid to ${e.nonresidentState}:`);
+      if (e.salaryDays > 0) console.log(`    Salary:  ${e.salaryDays} / ${e.salaryTotalDays} days`);
+      if (e.rsuIncome > 0) console.log(`    RSU:     ${formatDollar(e.rsuIncome)}`);
+      if (e.esppIncome > 0) console.log(`    ESPP:    ${formatDollar(e.esppIncome)}`);
     }
   }
 }
 
-function printSalaryAllocations(allocations: SalaryAllocation[]): void {
-  if (allocations.length === 0) return;
+// ── Detail tables (behind --detail flag) ────────────────────────────
 
-  console.log("\n\n=== Salary Allocation (20 NYCRR §132.18) ===");
-  console.log("Apply these fractions to your non-equity W-2 compensation (salary,");
-  console.log("bonus, taxable fringe benefits, etc. — excluding the RSU/ESPP ordinary");
-  console.log("income reported above).\n");
+function printDetailTables(summary: TaxYearSummary): void {
+  const locations = allClaimingStates(summary);
+  if (locations.length === 0) return;
 
-  const allLocations = [
-    ...new Set(allocations.flatMap((a) => Object.keys(a.fractionByLocation))),
-  ].sort();
-
-  const header =
-    `${"Year".padEnd(6)} ${"Work Days".padStart(10)}  ` +
-    allLocations.map((l) => `${(l + " days").padStart(10)} ${(l + " %").padStart(10)}`).join("  ");
-  console.log(header);
-  console.log("-".repeat(header.length));
-
-  for (const a of allocations) {
-    const locCols = allLocations
-      .map(
-        (l) =>
-          `${String(a.daysByLocation[l] ?? 0).padStart(10)} ${formatPercent(a.fractionByLocation[l] ?? 0).padStart(10)}`,
-      )
-      .join("  ");
-    console.log(`${String(a.year).padEnd(6)} ${String(a.totalDays).padStart(10)}  ${locCols}`);
-  }
-
-  // Warn on multi-state overlap
-  for (const a of allocations) {
-    const totalFraction = Object.values(a.fractionByLocation).reduce((s, f) => s + f, 0);
-    if (totalFraction > 1.005) {
+  if (summary.vestAllocations.length > 0) {
+    console.log("\n  [Detail] RSU Vests:");
+    for (const va of summary.vestAllocations) {
+      const locParts = locations
+        .map((l) => {
+          const inc = (va.residentIncomeByState[l] ?? 0) + (va.nonresidentIncomeByState[l] ?? 0);
+          if (inc === 0) return null;
+          const tag = va.residentIncomeByState[l] ? "res" : "nr";
+          return `${l}=${formatDollar(inc)} (${tag})`;
+        })
+        .filter(Boolean)
+        .join("  ");
       console.log(
-        `\n  ** ${a.year}: fractions sum to ${formatPercent(totalFraction)} — multiple states claim the same days.`,
+        `    ${va.grantId.padEnd(10)} ${va.vestDate.toString()} ${String(va.shares).padStart(6)} × ${formatDollar(va.fmvPerShare).padStart(8)} = ${formatDollar(va.income).padStart(12)}  ${locParts}`,
       );
     }
+  }
+
+  if (summary.esppSaleAllocations.length > 0) {
+    console.log("\n  [Detail] ESPP Sales:");
+    for (const ea of summary.esppSaleAllocations) {
+      const locParts = locations
+        .map((l) => {
+          const inc =
+            (ea.residentOrdinaryIncomeByState[l] ?? 0) +
+            (ea.nonresidentOrdinaryIncomeByState[l] ?? 0);
+          if (inc === 0) return null;
+          const tag = ea.residentOrdinaryIncomeByState[l] ? "res" : "nr";
+          return `${l}=${formatDollar(inc)} (${tag})`;
+        })
+        .filter(Boolean)
+        .join("  ");
+      console.log(
+        `    ${ea.purchaseId.padEnd(34)} ${ea.saleDate.toString()} ${String(ea.shares).padStart(6)} ord=${formatDollar(ea.ordinaryIncome).padStart(10)}  ${locParts}`,
+      );
+    }
+  }
+}
+
+// ── Main output ─────────────────────────────────────────────────────
+
+function printYear(
+  summary: TaxYearSummary,
+  salary: SalaryAllocation | undefined,
+  showDetail: boolean,
+): void {
+  const states = allClaimingStates(summary, salary);
+  if (states.length === 0) return;
+
+  console.log(`\n=== Tax Year ${summary.taxYear} ===`);
+
+  for (const state of states) {
+    printStateSection(state, summary, salary);
+  }
+
+  const ostcEntries = computeOstcEntries(summary, salary);
+  printOstcSection(ostcEntries);
+
+  if (showDetail) {
+    printDetailTables(summary);
   }
 }
 
@@ -163,12 +284,12 @@ function printWarnings(): void {
 }
 
 const args = process.argv.slice(2);
-const detailVests = args.includes("--detail-vests");
-const filteredArgs = args.filter((a) => a !== "--detail-vests");
+const showDetail = args.includes("--detail");
+const filteredArgs = args.filter((a) => a !== "--detail");
 
 const dirPath = filteredArgs[0];
 if (!dirPath) {
-  console.error("usage: node cli.ts <data-directory> [--detail-vests]");
+  console.error("usage: node cli.ts <data-directory> [--detail]");
   process.exit(1);
 }
 
@@ -176,5 +297,31 @@ printWarnings();
 const input = loadDirectory(dirPath);
 const summaries = computeAllocations(input);
 const salaryAllocations = computeSalaryAllocations(input);
-printSummary(summaries, detailVests);
-printSalaryAllocations(salaryAllocations);
+
+// Index salary allocations by year for easy lookup
+const salaryByYear = new Map<number, SalaryAllocation>();
+for (const sa of salaryAllocations) {
+  salaryByYear.set(sa.year, sa);
+}
+
+// Print years that appear in either summaries or salary allocations
+const allYears = new Set<number>();
+for (const s of summaries) allYears.add(s.taxYear);
+for (const sa of salaryAllocations) allYears.add(sa.year);
+
+const summaryByYear = new Map<number, TaxYearSummary>();
+for (const s of summaries) summaryByYear.set(s.taxYear, s);
+
+for (const year of [...allYears].sort()) {
+  const summary = summaryByYear.get(year) ?? {
+    taxYear: year,
+    vestAllocations: [],
+    esppSaleAllocations: [],
+    weightedFractionByLocation: {},
+    totalShares: 0,
+    totalIncome: 0,
+    totalResidentIncomeByState: {},
+    totalNonresidentIncomeByState: {},
+  };
+  printYear(summary, salaryByYear.get(year), showDetail);
+}

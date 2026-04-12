@@ -90,25 +90,51 @@ export interface EsppSaleAllocation {
   /** Total working days in the offering period (offering start → purchase date, inclusive). */
   totalDays: number;
   fractionByLocation: Record<string, number>;
-  ordinaryIncomeByLocation: Record<string, number>;
+
+  /**
+   * Ordinary income split by filing status (see VestAllocation for details).
+   *
+   * For a single allocation, resident status is determined at one point
+   * in time (the sale date), so each state appears in exactly one map.
+   */
+  residentOrdinaryIncomeByState: Record<string, number>;
+  nonresidentOrdinaryIncomeByState: Record<string, number>;
 }
 
 /**
  * Calendar-year working-day allocation for salary sourcing.
  *
- * Per 20 NYCRR §132.18(a), salary is allocated to NY based on:
- *   NY salary = total compensation × (NY working days / total working days)
+ * Per 20 NYCRR §132.18(a), salary is allocated to a state based on:
+ *   state salary = total compensation × (state working days / total working days)
  * where non-working days (weekends, holidays, vacation, sick, leave) are
  * excluded from both numerator and denominator.
  *
- * With state rules applied, a single day may be claimed by multiple states,
- * so fractions may sum to more than 1.0.
+ * Days are split by filing status:
+ * - Resident days: the taxpayer was domiciled or statutory-resident in the
+ *   state on that date (files as resident — worldwide income taxed)
+ * - Nonresident days: the taxpayer physically worked in the state but was
+ *   not a resident (files as nonresident — sourced income only)
+ *
+ * A single day may be claimed by multiple states, so the sum of all
+ * states' days may exceed totalDays.
  */
 export interface SalaryAllocation {
   year: number;
-  daysByLocation: Record<string, number>;
   totalDays: number;
-  fractionByLocation: Record<string, number>;
+  residentDaysByState: Record<string, number>;
+  nonresidentDaysByState: Record<string, number>;
+  /**
+   * Cross-state source days for OSTC calculations.
+   *
+   * `crossStateSourceDays[residentState][nonresidentState]` = number of
+   * days the taxpayer physically worked in `nonresidentState` while being
+   * a resident of `residentState`.
+   *
+   * This tells you: "while I was a resident of CA, I worked N days in NY
+   * as a nonresident" → (N / totalDays) × wages is the OSTC-eligible
+   * salary amount on the CA return for taxes paid to NY.
+   */
+  crossStateSourceDays: Record<string, Record<string, number>>;
 }
 
 // ── State tax rules ─────────────────────────────────────────────────
@@ -194,16 +220,47 @@ export interface VestAllocation {
   daysByLocation: Record<string, number>;
   totalDays: number;
   fractionByLocation: Record<string, number>;
-  incomeByLocation: Record<string, number>;
+
+  /**
+   * Income split by filing status.
+   *
+   * A state is "resident" if the taxpayer was domiciled there or had
+   * statutory residence at the vest date (the income recognition date).
+   * All other claiming states are "nonresident" (state-sourced income).
+   *
+   * For a single allocation, resident status is determined at one point
+   * in time (the vest date), so each state appears in exactly one map.
+   *
+   * This distinction is needed because:
+   * - Resident states tax worldwide income → file as resident
+   * - Nonresident source states tax only sourced income → file as nonresident
+   * - The resident state's other-state tax credit (OSTC) is based on the
+   *   nonresident income amount
+   */
+  residentIncomeByState: Record<string, number>;
+  nonresidentIncomeByState: Record<string, number>;
 }
 
 export interface TaxYearSummary {
   taxYear: number;
   vestAllocations: VestAllocation[];
   esppSaleAllocations: EsppSaleAllocation[];
-  /** Weighted by income, not by share count. Fractions may sum to >1.0. */
-  weightedFractionByLocation: Record<string, number>;
   totalShares: number;
   totalIncome: number;
-  totalIncomeByLocation: Record<string, number>;
+
+  /**
+   * Aggregated income split by filing status across all vests and ESPP sales.
+   *
+   * A state may appear in both maps when residency status changes
+   * mid-year (e.g. move out of NY in March, vest in February as NY
+   * resident, vest in June as NY nonresident source).
+   *
+   * - totalResidentIncomeByState: income claimed because of domicile /
+   *   statutory residence at the recognition date (file as resident)
+   * - totalNonresidentIncomeByState: income claimed via physical
+   *   work-location sourcing (file as nonresident; use this amount for
+   *   OSTC on the resident return)
+   */
+  totalResidentIncomeByState: Record<string, number>;
+  totalNonresidentIncomeByState: Record<string, number>;
 }

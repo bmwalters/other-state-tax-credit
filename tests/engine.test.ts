@@ -35,8 +35,8 @@ describe("computeAllocations – RSU", () => {
     expect(result[0].totalShares).toBe(100);
     expect(result[0].totalIncome).toBe(5000);
     expect(result[0].vestAllocations[0].fractionByLocation["US-NY"]).toBeCloseTo(1.0);
-    expect(result[0].vestAllocations[0].incomeByLocation["US-NY"]).toBeCloseTo(5000);
-    expect(result[0].totalIncomeByLocation["US-NY"]).toBeCloseTo(5000);
+    expect(result[0].vestAllocations[0].nonresidentIncomeByState["US-NY"]).toBeCloseTo(5000);
+    expect(result[0].totalNonresidentIncomeByState["US-NY"]).toBeCloseTo(5000);
     expect(result[0].esppSaleAllocations).toHaveLength(0);
   });
 
@@ -64,8 +64,8 @@ describe("computeAllocations – RSU", () => {
     expect(alloc.fractionByLocation["US-NY"]).toBeCloseTo(65 / 131);
     expect(alloc.fractionByLocation["US-CA"]).toBeCloseTo(66 / 131);
     expect(alloc.income).toBe(6000);
-    expect(alloc.incomeByLocation["US-NY"]).toBeCloseTo(6000 * (65 / 131));
-    expect(alloc.incomeByLocation["US-CA"]).toBeCloseTo(6000 * (66 / 131));
+    expect(alloc.nonresidentIncomeByState["US-NY"]).toBeCloseTo(6000 * (65 / 131));
+    expect(alloc.nonresidentIncomeByState["US-CA"]).toBeCloseTo(6000 * (66 / 131));
   });
 
   it("only counts days within the grant-to-vest window", () => {
@@ -138,7 +138,7 @@ describe("computeAllocations – RSU", () => {
     expect(alloc.totalDays).toBe(129);
     expect(alloc.daysByLocation["US-NY"]).toBe(129);
     expect(alloc.fractionByLocation["US-NY"]).toBeCloseTo(1);
-    expect(alloc.incomeByLocation["US-NY"]).toBeCloseTo(4000);
+    expect(alloc.nonresidentIncomeByState["US-NY"]).toBeCloseTo(4000);
   });
 
   it("treats uncovered weekdays as non-NY", () => {
@@ -207,10 +207,9 @@ describe("computeAllocations – RSU", () => {
     };
 
     const result = computeAllocations(input);
-    // Both grants have identical date ranges, so weighted average = simple average
-    expect(result[0].weightedFractionByLocation["US-NY"]).toBeCloseTo(65 / 131);
+    // Both grants have identical date ranges
     expect(result[0].totalIncome).toBe(10000);
-    expect(result[0].totalIncomeByLocation["US-NY"]).toBeCloseTo(10000 * (65 / 131));
+    expect(result[0].totalNonresidentIncomeByState["US-NY"]).toBeCloseTo(10000 * (65 / 131));
   });
 });
 
@@ -256,7 +255,7 @@ describe("computeAllocations – ESPP", () => {
     expect(alloc.ordinaryIncome).toBeCloseTo(750); // 7.5 * 100
     expect(alloc.totalDays).toBe(131); // weekdays from Jan 1 to Jul 1, inclusive
     expect(alloc.fractionByLocation["US-NY"]).toBeCloseTo(1.0);
-    expect(alloc.ordinaryIncomeByLocation["US-NY"]).toBeCloseTo(750);
+    expect(alloc.nonresidentOrdinaryIncomeByState["US-NY"]).toBeCloseTo(750);
   });
 
   it("allocates ESPP discount based on offering period, not sale date", () => {
@@ -307,8 +306,8 @@ describe("computeAllocations – ESPP", () => {
     const caFrac = 87 / 131;
     expect(alloc.fractionByLocation["US-NY"]).toBeCloseTo(nyFrac);
     expect(alloc.fractionByLocation["US-CA"]).toBeCloseTo(caFrac);
-    expect(alloc.ordinaryIncomeByLocation["US-NY"]).toBeCloseTo(750 * nyFrac);
-    expect(alloc.ordinaryIncomeByLocation["US-CA"]).toBeCloseTo(750 * caFrac);
+    expect(alloc.nonresidentOrdinaryIncomeByState["US-NY"]).toBeCloseTo(750 * nyFrac);
+    expect(alloc.nonresidentOrdinaryIncomeByState["US-CA"]).toBeCloseTo(750 * caFrac);
   });
 
   it("uses actual gain when a disqualifying sale is below purchase-date FMV", () => {
@@ -343,7 +342,7 @@ describe("computeAllocations – ESPP", () => {
     const alloc = result[0].esppSaleAllocations[0];
     expect(alloc.discountPerShare).toBeCloseTo(7.5);
     expect(alloc.ordinaryIncome).toBeCloseTo(250); // (45 - 42.5) * 100
-    expect(alloc.ordinaryIncomeByLocation["US-NY"]).toBeCloseTo(250);
+    expect(alloc.nonresidentOrdinaryIncomeByState["US-NY"]).toBeCloseTo(250);
   });
 
   it("treats disqualifying ESPP loss sales as zero ordinary income", () => {
@@ -378,7 +377,7 @@ describe("computeAllocations – ESPP", () => {
     const alloc = result[0].esppSaleAllocations[0];
     expect(alloc.discountPerShare).toBeCloseTo(7.5);
     expect(alloc.ordinaryIncome).toBeCloseTo(0);
-    expect(alloc.ordinaryIncomeByLocation["US-NY"]).toBeCloseTo(0);
+    expect(alloc.nonresidentOrdinaryIncomeByState["US-NY"]).toBeCloseTo(0);
   });
 
   it("uses the qualified-disposition grant-date discount cap", () => {
@@ -414,7 +413,7 @@ describe("computeAllocations – ESPP", () => {
     expect(alloc.dispositionType).toBe("QUALIFIED");
     expect(alloc.discountPerShare).toBeCloseTo(14.86 - 12.2485);
     expect(alloc.ordinaryIncome).toBeCloseTo(734.91); // min(actual gain, grant-date discount)
-    expect(alloc.ordinaryIncomeByLocation["US-NY"]).toBeCloseTo(734.91);
+    expect(alloc.nonresidentOrdinaryIncomeByState["US-NY"]).toBeCloseTo(734.91);
   });
 
   it("caps qualified-disposition ordinary income at actual gain", () => {
@@ -598,8 +597,9 @@ describe("computeAllocations – ESPP", () => {
     expect(summary.totalShares).toBe(200); // 100 RSU + 100 ESPP
     expect(summary.vestAllocations).toHaveLength(1);
     expect(summary.esppSaleAllocations).toHaveLength(1);
-    expect(summary.totalIncomeByLocation["US-NY"]).toBeCloseTo(rsuIncome + esppOrdinaryIncome);
-    expect(summary.weightedFractionByLocation["US-NY"]).toBeCloseTo(1.0);
+    expect(summary.totalNonresidentIncomeByState["US-NY"]).toBeCloseTo(
+      rsuIncome + esppOrdinaryIncome,
+    );
   });
 
   it("uses offering period for allocation even when sale is much later", () => {
@@ -644,7 +644,7 @@ describe("computeAllocations – ESPP", () => {
     expect(alloc.fractionByLocation["US-NY"]).toBeCloseTo(1.0);
     expect(alloc.fractionByLocation["US-CA"]).toBeUndefined();
     expect(alloc.ordinaryIncome).toBeCloseTo(1000); // grant-date discount = (50-40) * 100
-    expect(alloc.ordinaryIncomeByLocation["US-NY"]).toBeCloseTo(1000);
+    expect(alloc.nonresidentOrdinaryIncomeByState["US-NY"]).toBeCloseTo(1000);
   });
 
   it("handles ESPP with no grants (ESPP-only input)", () => {
@@ -707,8 +707,9 @@ describe("computeSalaryAllocations", () => {
     expect(result).toHaveLength(1);
     expect(result[0].year).toBe(2024);
     expect(result[0].totalDays).toBe(262); // 2024 has 262 weekdays
-    expect(result[0].daysByLocation["US-NY"]).toBe(262);
-    expect(result[0].fractionByLocation["US-NY"]).toBeCloseTo(1.0);
+    // No domicile → all nonresident
+    expect(result[0].nonresidentDaysByState["US-NY"]).toBe(262);
+    expect(result[0].residentDaysByState["US-NY"]).toBeUndefined();
   });
 
   it("splits across two locations in the same year", () => {
@@ -724,11 +725,9 @@ describe("computeSalaryAllocations", () => {
     const result = computeSalaryAllocations(input);
     expect(result).toHaveLength(1);
     expect(result[0].year).toBe(2024);
-    const nyDays = result[0].daysByLocation["US-NY"]!;
-    const caDays = result[0].daysByLocation["US-CA"]!;
+    const nyDays = result[0].nonresidentDaysByState["US-NY"]!;
+    const caDays = result[0].nonresidentDaysByState["US-CA"]!;
     expect(nyDays + caDays).toBe(262);
-    expect(result[0].fractionByLocation["US-NY"]).toBeCloseTo(nyDays / 262);
-    expect(result[0].fractionByLocation["US-CA"]).toBeCloseTo(caDays / 262);
   });
 
   it("spans multiple calendar years", () => {
@@ -742,8 +741,8 @@ describe("computeSalaryAllocations", () => {
     expect(result).toHaveLength(2);
     expect(result[0].year).toBe(2023);
     expect(result[1].year).toBe(2024);
-    expect(result[0].fractionByLocation["US-NY"]).toBeCloseTo(1.0);
-    expect(result[1].fractionByLocation["US-NY"]).toBeCloseTo(1.0);
+    expect(result[0].nonresidentDaysByState["US-NY"]).toBe(result[0].totalDays);
+    expect(result[1].nonresidentDaysByState["US-NY"]).toBe(result[1].totalDays);
   });
 
   it("excludes holidays from both numerator and denominator", () => {
@@ -759,11 +758,10 @@ describe("computeSalaryAllocations", () => {
 
     const result = computeSalaryAllocations(input);
     expect(result[0].totalDays).toBe(260); // 262 - 2 holidays
-    expect(result[0].daysByLocation["US-NY"]).toBe(260);
-    expect(result[0].fractionByLocation["US-NY"]).toBeCloseTo(1.0);
+    expect(result[0].nonresidentDaysByState["US-NY"]).toBe(260);
   });
 
-  it("treats uncovered weekdays as non-NY (reduces NY fraction)", () => {
+  it("treats uncovered weekdays as non-NY (reduces NY count)", () => {
     // Only cover Jan in NY; rest of year uncovered
     const input: InputData = {
       ...EMPTY_STATE_RULES,
@@ -774,8 +772,7 @@ describe("computeSalaryAllocations", () => {
     const result = computeSalaryAllocations(input);
     expect(result).toHaveLength(1);
     expect(result[0].totalDays).toBe(262); // full year denominator
-    expect(result[0].daysByLocation["US-NY"]).toBe(23); // weekdays in Jan 2024
-    expect(result[0].fractionByLocation["US-NY"]).toBeCloseTo(23 / 262);
+    expect(result[0].nonresidentDaysByState["US-NY"]).toBe(23); // weekdays in Jan 2024
   });
 
   it("returns empty for no work intervals", () => {

@@ -32,7 +32,7 @@ export function isWeekday(date: Temporal.PlainDate): boolean {
  * Build a Set of ISO date strings for all weekdays inside the given
  * non-working intervals that fall within [windowStart, windowEnd] (inclusive).
  */
-function buildNonWorkingSet(
+export function buildNonWorkingSet(
   nonWorkingIntervals: NonWorkingInterval[],
   windowStart: Temporal.PlainDate,
   windowEnd: Temporal.PlainDate,
@@ -73,7 +73,7 @@ export interface WorkingDayAllocation {
  *
  * Throws on overlapping work intervals.
  */
-function buildDayLocationMap(
+export function buildDayLocationMap(
   start: Temporal.PlainDate,
   end: Temporal.PlainDate,
   workIntervals: WorkInterval[],
