@@ -4,6 +4,23 @@ import type { StateRulesConfig } from "./state-rules.ts";
 import { resolveClaimingStates } from "./state-rules.ts";
 
 /**
+ * Signature for a function that resolves which states claim a working
+ * day's income given the date, physical work location, and state rules.
+ *
+ * Two implementations are provided by state-rules.ts:
+ * - {@link resolveClaimingStates} — includes domicile + statutory
+ *   residence per day (correct for salary, which is earned day-by-day)
+ * - {@link resolveNonresidentSourceStates} — physical location only,
+ *   for equity nonresident sourcing (resident claims applied separately
+ *   at the recognition date)
+ */
+export type DayResolver = (
+  date: Temporal.PlainDate,
+  physicalLocation: string | undefined,
+  config: StateRulesConfig,
+) => string[];
+
+/**
  * Returns true if the given date is a weekday (Mon–Fri).
  * Temporal.PlainDate.dayOfWeek: 1=Mon … 7=Sun.
  */
@@ -99,9 +116,15 @@ function buildDayLocationMap(
  * Validate work intervals and count working days per claiming state
  * within the inclusive allocation window [start, end].
  *
- * Each day is resolved through state rules to the union of claiming
- * states (domicile, statutory residence, and/or non-resident physical
- * location). A single day may appear in multiple state buckets.
+ * Each day is resolved through the provided {@link DayResolver} to
+ * determine which states claim that day's income. A single day may
+ * appear in multiple state buckets.
+ *
+ * The default resolver ({@link resolveClaimingStates}) includes
+ * domicile and statutory residence per day — appropriate for salary.
+ * For equity income, pass {@link resolveNonresidentSourceStates} to
+ * get physical-location-only counts, then apply the resident override
+ * at the recognition date via {@link getResidentStates}.
  *
  * Throws on overlapping work intervals.
  */
@@ -111,6 +134,7 @@ export function countWorkingDaysByLocation(
   workIntervals: WorkInterval[],
   nonWorkingIntervals: NonWorkingInterval[],
   stateRulesConfig: StateRulesConfig,
+  resolveDay: DayResolver = resolveClaimingStates,
 ): WorkingDayAllocation {
   const nonWorkingDays = buildNonWorkingSet(nonWorkingIntervals, start, end);
   const dayLocation = buildDayLocationMap(start, end, workIntervals, nonWorkingDays);
@@ -124,7 +148,7 @@ export function countWorkingDaysByLocation(
     if (isWeekday(cursor) && !nonWorkingDays.has(key)) {
       totalWorkingDays++;
       const physicalLocation = dayLocation.get(key);
-      const claimingStates = resolveClaimingStates(cursor, physicalLocation, stateRulesConfig);
+      const claimingStates = resolveDay(cursor, physicalLocation, stateRulesConfig);
       for (const state of claimingStates) {
         daysByLocation[state] = (daysByLocation[state] ?? 0) + 1;
       }

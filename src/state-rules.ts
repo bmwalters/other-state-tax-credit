@@ -164,7 +164,64 @@ export function getStatutoryResidenceStates(
 }
 
 /**
+ * Get resident states (domicile + statutory residence) for a given date.
+ *
+ * For equity income (RSU vests, ESPP sales), resident states at the
+ * income recognition date claim 100% of the income — the "worldwide
+ * income" rule per FTB Pub. 1100 §D/E.
+ *
+ * Returns a deduplicated array of state codes.
+ */
+export function getResidentStates(date: Temporal.PlainDate, config: StateRulesConfig): string[] {
+  const states = new Set<string>();
+  const domicile = getDomicileState(date, config.domicileIntervals);
+  if (domicile) states.add(domicile);
+  for (const sr of getStatutoryResidenceStates(date.year, config.statutoryResidences)) {
+    states.add(sr);
+  }
+  return [...states];
+}
+
+/**
+ * Resolve nonresident source states for a single working day.
+ *
+ * Returns only the physical work location, filtered through:
+ *   1. No-income-tax suppression (TX, FL, … — always excluded)
+ *   2. De minimis suppression (<10 days, no reporting event — excluded)
+ *
+ * Does NOT include domicile or statutory residence. Those are applied
+ * separately via {@link getResidentStates} at the income recognition
+ * date (vest date for RSUs, sale date for ESPP).
+ *
+ * This separation exists because nonresident sourcing and resident
+ * worldwide-income taxation are fundamentally different rules:
+ *   - Nonresident sourcing: workday allocation over the service period
+ *   - Resident taxation: 100% at the recognition date
+ *     (FTB Pub. 1100 §D–E; 18 CCR §17951-5)
+ */
+export function resolveNonresidentSourceStates(
+  date: Temporal.PlainDate,
+  physicalLocation: string | undefined,
+  config: StateRulesConfig,
+): string[] {
+  if (!physicalLocation) return [];
+  if (isNoIncomeTaxState(physicalLocation)) return [];
+  if (isDeMinimis(physicalLocation, date.year, config)) return [];
+  return [physicalLocation];
+}
+
+/**
  * Resolve the set of claiming states for a single working day.
+ *
+ * This is the **salary-appropriate** resolver: every day's income is
+ * claimed by the union of resident states and the physical work location.
+ * Salary is earned day-by-day, so the per-day domicile inclusion is
+ * correct — each day's pay is independently taxable by the domicile
+ * state on that date.
+ *
+ * For equity income (RSU vests, ESPP sales), use
+ * {@link resolveNonresidentSourceStates} for day counting, then apply
+ * {@link getResidentStates} at the recognition date for the 100% claim.
  *
  * Every day's income is claimed by the union of:
  * - The domicile state on that date (if any)

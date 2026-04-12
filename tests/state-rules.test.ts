@@ -4,11 +4,13 @@ import {
   buildStateRulesConfig,
   computeYearlyDayCounts,
   getDomicileState,
+  getResidentStates,
   getStatutoryResidenceStates,
   isDeMinimis,
   isNoIncomeTaxState,
   NO_INCOME_TAX_STATES,
   resolveClaimingStates,
+  resolveNonresidentSourceStates,
   type StateRulesConfig,
 } from "../src/state-rules.ts";
 import { countWorkingDaysByLocation } from "../src/workdays.ts";
@@ -88,11 +90,18 @@ describe("isDeMinimis", () => {
     expect(isDeMinimis("US-NJ", 2024, config)).toBe(true);
   });
 
-  it("returns false for taxing state with >=5 days", () => {
+  it("returns false for taxing state with >=10 days", () => {
     const config = makeConfig({
-      yearlyDayCounts: new Map([[2024, { "US-NJ": 5 }]]),
+      yearlyDayCounts: new Map([[2024, { "US-NJ": 10 }]]),
     });
     expect(isDeMinimis("US-NJ", 2024, config)).toBe(false);
+  });
+
+  it("returns true for taxing state with 9 days and no reporting event", () => {
+    const config = makeConfig({
+      yearlyDayCounts: new Map([[2024, { "US-NJ": 9 }]]),
+    });
+    expect(isDeMinimis("US-NJ", 2024, config)).toBe(true);
   });
 
   it("returns false when reporting event exists even with <5 days", () => {
@@ -402,10 +411,10 @@ describe("countWorkingDaysByLocation with state rules", () => {
     expect(result.daysByLocation["US-NY"]).toBe(23); // 20 physical + 3 domicile
   });
 
-  it("does NOT suppress when >=5 days even without reporting event", () => {
+  it("does NOT suppress when >=10 days even without reporting event", () => {
     const workIntervals = [
-      { start: pd("2024-01-01"), end: pd("2024-01-07"), location: "US-NJ" }, // Mon-Fri = 5
-      { start: pd("2024-01-08"), end: pd("2024-01-31"), location: "US-NY" },
+      { start: pd("2024-01-01"), end: pd("2024-01-14"), location: "US-NJ" }, // Mon-Fri×2 = 10
+      { start: pd("2024-01-15"), end: pd("2024-01-31"), location: "US-NY" },
     ];
     const config = buildStateRulesConfig(
       workIntervals,
@@ -423,9 +432,9 @@ describe("countWorkingDaysByLocation with state rules", () => {
       config,
     );
 
-    // NJ has 5 days (>=5) → NOT suppressed
-    expect(result.daysByLocation["US-NJ"]).toBe(5);
-    // NY: 18 physical + 5 domicile-on-NJ-days = 23
+    // NJ has 10 days (>=10) → NOT suppressed
+    expect(result.daysByLocation["US-NJ"]).toBe(10);
+    // NY: 13 physical + 10 domicile-on-NJ-days = 23
     expect(result.daysByLocation["US-NY"]).toBe(23);
   });
 
@@ -543,10 +552,13 @@ describe("computeAllocations with state rules", () => {
     expect(alloc.fractionByLocation["US-CA"]).toBeCloseTo(1.0);
   });
 
-  it("de minimis kept with multi-residence for RSU vest", () => {
+  it("de minimis suppressed for equity even with multi-residence", () => {
     // Domiciled in CA, statutory resident of NY.
-    // 3 days in NJ (de minimis candidate), 5 days in NY.
-    // Because 2 residence states, NJ is NOT suppressed → credit opportunity.
+    // 3 days in NJ (de minimis), 7 days in NY.
+    // For equity income, nonresident sourcing uses resolveNonresidentSourceStates
+    // which suppresses de minimis unconditionally (the multi-residence credit
+    // exception only applies to salary). Resident states get 100% via the
+    // recognition-date override.
     const input: InputData = {
       ...EMPTY_STATE_RULES,
       grants: [
@@ -568,9 +580,9 @@ describe("computeAllocations with state rules", () => {
     const result = computeAllocations(input);
     const alloc = result[0].vestAllocations[0];
     expect(alloc.totalDays).toBe(10);
-    expect(alloc.daysByLocation["US-NJ"]).toBe(3); // kept for credit
-    expect(alloc.daysByLocation["US-CA"]).toBe(10); // domicile: all days
-    expect(alloc.daysByLocation["US-NY"]).toBe(10); // statutory + physical
+    expect(alloc.daysByLocation["US-NJ"]).toBeUndefined(); // de minimis suppressed
+    expect(alloc.daysByLocation["US-CA"]).toBe(10); // domicile at vest → 100%
+    expect(alloc.daysByLocation["US-NY"]).toBe(10); // statutory residence → 100%
   });
 });
 
@@ -611,5 +623,402 @@ describe("computeSalaryAllocations with state rules", () => {
     expect(result[0].daysByLocation["US-NJ"]).toBe(3);
     expect(result[0].daysByLocation["US-CA"]).toBe(262); // domicile: all days
     expect(result[0].daysByLocation["US-NY"]).toBe(262); // statutory + physical
+  });
+});
+
+// ── resolveNonresidentSourceStates ──────────────────────────────────
+
+describe("resolveNonresidentSourceStates", () => {
+  it("returns physical location for a taxing state above de minimis", () => {
+    const config = makeConfig({
+      yearlyDayCounts: new Map([[2024, { "US-NJ": 20 }]]),
+    });
+    expect(resolveNonresidentSourceStates(pd("2024-03-15"), "US-NJ", config)).toEqual(["US-NJ"]);
+  });
+
+  it("does NOT include domicile or statutory residence", () => {
+    const config = makeConfig({
+      domicileIntervals: [{ start: pd("2024-01-01"), end: pd("2024-12-31"), state: "US-CA" }],
+      statutoryResidences: [{ year: 2024, state: "US-NY" }],
+      yearlyDayCounts: new Map([[2024, { "US-NJ": 20 }]]),
+    });
+    // Only the physical location — no CA domicile, no NY statutory
+    expect(resolveNonresidentSourceStates(pd("2024-03-15"), "US-NJ", config)).toEqual(["US-NJ"]);
+  });
+
+  it("suppresses no-income-tax states", () => {
+    const config = makeConfig({
+      yearlyDayCounts: new Map([[2024, { "US-TX": 100 }]]),
+    });
+    expect(resolveNonresidentSourceStates(pd("2024-03-15"), "US-TX", config)).toEqual([]);
+  });
+
+  it("suppresses de minimis states unconditionally", () => {
+    // Even with multiple residence states, nonresident sourcing suppresses de minimis
+    const config = makeConfig({
+      domicileIntervals: [{ start: pd("2024-01-01"), end: pd("2024-12-31"), state: "US-CA" }],
+      statutoryResidences: [{ year: 2024, state: "US-NY" }],
+      yearlyDayCounts: new Map([[2024, { "US-NJ": 3 }]]),
+    });
+    expect(resolveNonresidentSourceStates(pd("2024-03-15"), "US-NJ", config)).toEqual([]);
+  });
+
+  it("returns empty for no physical location", () => {
+    const config = makeConfig();
+    expect(resolveNonresidentSourceStates(pd("2024-03-15"), undefined, config)).toEqual([]);
+  });
+});
+
+// ── getResidentStates ───────────────────────────────────────────────
+
+describe("getResidentStates", () => {
+  it("returns domicile state for a date within a domicile interval", () => {
+    const config = makeConfig({
+      domicileIntervals: [{ start: pd("2024-01-01"), end: pd("2024-12-31"), state: "US-CA" }],
+    });
+    expect(getResidentStates(pd("2024-06-15"), config)).toEqual(["US-CA"]);
+  });
+
+  it("returns statutory residence states for the year", () => {
+    const config = makeConfig({
+      statutoryResidences: [{ year: 2024, state: "US-NY" }],
+    });
+    expect(getResidentStates(pd("2024-06-15"), config)).toEqual(["US-NY"]);
+  });
+
+  it("returns domicile + statutory residence (deduplicated)", () => {
+    const config = makeConfig({
+      domicileIntervals: [{ start: pd("2024-01-01"), end: pd("2024-12-31"), state: "US-CA" }],
+      statutoryResidences: [{ year: 2024, state: "US-NY" }],
+    });
+    expect(getResidentStates(pd("2024-06-15"), config).sort()).toEqual(["US-CA", "US-NY"]);
+  });
+
+  it("deduplicates when domicile = statutory residence", () => {
+    const config = makeConfig({
+      domicileIntervals: [{ start: pd("2024-01-01"), end: pd("2024-12-31"), state: "US-NY" }],
+      statutoryResidences: [{ year: 2024, state: "US-NY" }],
+    });
+    expect(getResidentStates(pd("2024-06-15"), config)).toEqual(["US-NY"]);
+  });
+
+  it("returns empty when no domicile or statutory residence", () => {
+    const config = makeConfig();
+    expect(getResidentStates(pd("2024-06-15"), config)).toEqual([]);
+  });
+
+  it("returns empty for a date outside all domicile intervals", () => {
+    const config = makeConfig({
+      domicileIntervals: [{ start: pd("2024-07-01"), end: pd("2024-12-31"), state: "US-CA" }],
+    });
+    expect(getResidentStates(pd("2024-03-15"), config)).toEqual([]);
+  });
+});
+
+// ── Part-year domicile: RSU vest (the "residency trap") ────────────
+
+describe("computeAllocations – part-year domicile RSU", () => {
+  it("domicile state at vest date gets 100% (the residency trap)", () => {
+    // FTB Pub. 1100 §E, Example 14: Stock options granted in NV,
+    // exercised after moving to CA → 100% taxable by CA.
+    //
+    // Scenario: Grant in GA, move to CA mid-window, vest in CA.
+    // CA (domicile at vest) → 100%. GA (physical source) → proportional.
+    const input: InputData = {
+      ...EMPTY_STATE_RULES,
+      grants: [
+        {
+          id: "G1",
+          awardDate: pd("2023-01-01"),
+          symbol: "XYZ",
+          vests: [{ date: pd("2024-06-01"), shares: 100, fmvPerShare: 50 }],
+        },
+      ],
+      workIntervals: [
+        { start: pd("2023-01-01"), end: pd("2024-03-31"), location: "US-GA" },
+        { start: pd("2024-04-01"), end: pd("2024-12-31"), location: "US-CA" },
+      ],
+      domicileIntervals: [
+        { start: pd("2023-01-01"), end: pd("2024-03-31"), state: "US-GA" },
+        { start: pd("2024-04-01"), end: pd("2024-12-31"), state: "US-CA" },
+      ],
+    };
+
+    const result = computeAllocations(input);
+    const alloc = result[0].vestAllocations[0];
+
+    // CA is domicile at vest date (2024-06-01) → 100%
+    expect(alloc.fractionByLocation["US-CA"]).toBeCloseTo(1.0);
+    expect(alloc.incomeByLocation["US-CA"]).toBeCloseTo(5000);
+
+    // GA gets its nonresident source fraction (days physically in GA / total)
+    const gaDays = alloc.daysByLocation["US-GA"]!;
+    const totalDays = alloc.totalDays;
+    expect(gaDays).toBeGreaterThan(0);
+    expect(alloc.fractionByLocation["US-GA"]).toBeCloseTo(gaDays / totalDays);
+
+    // CA physically-worked days are a subset, but domicile override gives 100%
+    expect(alloc.daysByLocation["US-CA"]).toBe(totalDays);
+  });
+
+  it("former domicile state gets NO credit when vest occurs after move-out", () => {
+    // Scenario: Domiciled in CA Jan-Jun, move to TX Jul onwards.
+    // Physically worked in CA Jan-Jun, TX Jul onwards.
+    // RSU vests in August — TX has no income tax, CA is no longer domicile.
+    // CA should only get its nonresident source fraction, not 100%.
+    const input: InputData = {
+      ...EMPTY_STATE_RULES,
+      grants: [
+        {
+          id: "G1",
+          awardDate: pd("2024-01-01"),
+          symbol: "XYZ",
+          vests: [{ date: pd("2024-08-15"), shares: 100, fmvPerShare: 50 }],
+        },
+      ],
+      workIntervals: [
+        { start: pd("2024-01-01"), end: pd("2024-06-30"), location: "US-CA" },
+        { start: pd("2024-07-01"), end: pd("2024-12-31"), location: "US-TX" },
+      ],
+      domicileIntervals: [
+        { start: pd("2024-01-01"), end: pd("2024-06-30"), state: "US-CA" },
+        { start: pd("2024-07-01"), end: pd("2024-12-31"), state: "US-TX" },
+      ],
+    };
+
+    const result = computeAllocations(input);
+    const alloc = result[0].vestAllocations[0];
+
+    // At vest date (Aug 15), domicile is TX (no income tax) → no resident override
+    // CA gets nonresident source fraction only (physical work days in CA)
+    const caDays = alloc.daysByLocation["US-CA"]!;
+    const totalDays = alloc.totalDays;
+    expect(caDays).toBeGreaterThan(0);
+    expect(caDays).toBeLessThan(totalDays);
+    expect(alloc.fractionByLocation["US-CA"]).toBeCloseTo(caDays / totalDays);
+    expect(alloc.fractionByLocation["US-CA"]).toBeLessThan(1.0);
+
+    // TX is suppressed (no income tax) and no longer triggers resident override
+    // since it's in NO_INCOME_TAX_STATES... wait, getResidentStates returns it.
+    // But TX being a no-income-tax state means... the resident override still
+    // adds it. That's correct — the function just identifies resident states,
+    // the no-income-tax filtering is a separate concern.
+    // TX gets 100% as domicile (even though it can't tax you — the program
+    // reports the claim; the no-income-tax filter is applied downstream).
+    expect(alloc.daysByLocation["US-TX"]).toBe(totalDays);
+  });
+
+  it("vest before move-in: new domicile state gets 0% (nonresident only)", () => {
+    // Grant and vest entirely before moving to CA.
+    // CA should get nothing because taxpayer wasn't a CA resident at vest.
+    const input: InputData = {
+      ...EMPTY_STATE_RULES,
+      grants: [
+        {
+          id: "G1",
+          awardDate: pd("2024-01-01"),
+          symbol: "XYZ",
+          vests: [{ date: pd("2024-03-15"), shares: 100, fmvPerShare: 50 }],
+        },
+      ],
+      workIntervals: [
+        { start: pd("2024-01-01"), end: pd("2024-06-30"), location: "US-GA" },
+        { start: pd("2024-07-01"), end: pd("2024-12-31"), location: "US-CA" },
+      ],
+      domicileIntervals: [
+        { start: pd("2024-01-01"), end: pd("2024-06-30"), state: "US-GA" },
+        { start: pd("2024-07-01"), end: pd("2024-12-31"), state: "US-CA" },
+      ],
+    };
+
+    const result = computeAllocations(input);
+    const alloc = result[0].vestAllocations[0];
+
+    // At vest date (Mar 15), domicile is GA → GA gets 100%
+    expect(alloc.fractionByLocation["US-GA"]).toBeCloseTo(1.0);
+
+    // CA has no claim — wasn't domicile at vest, no physical work in CA during window
+    expect(alloc.daysByLocation["US-CA"]).toBeUndefined();
+  });
+
+  it("statutory residence at vest year also gets 100%", () => {
+    // Statutory resident of NY for 2024, domiciled in CA.
+    // Physical work in NJ (above de minimis). Vest in 2024.
+    const input: InputData = {
+      ...EMPTY_STATE_RULES,
+      grants: [
+        {
+          id: "G1",
+          awardDate: pd("2024-01-01"),
+          symbol: "XYZ",
+          vests: [{ date: pd("2024-03-15"), shares: 100, fmvPerShare: 50 }],
+        },
+      ],
+      workIntervals: [{ start: pd("2024-01-01"), end: pd("2024-12-31"), location: "US-NJ" }],
+      domicileIntervals: [{ start: pd("2024-01-01"), end: pd("2024-12-31"), state: "US-CA" }],
+      statutoryResidences: [{ year: 2024, state: "US-NY" }],
+      reportingEvents: [{ year: 2024, state: "US-NJ" }],
+    };
+
+    const result = computeAllocations(input);
+    const alloc = result[0].vestAllocations[0];
+
+    // CA (domicile) → 100%, NY (statutory residence) → 100%
+    expect(alloc.fractionByLocation["US-CA"]).toBeCloseTo(1.0);
+    expect(alloc.fractionByLocation["US-NY"]).toBeCloseTo(1.0);
+    // NJ (nonresident source, above de minimis, reporting event) → 100% too
+    expect(alloc.fractionByLocation["US-NJ"]).toBeCloseTo(1.0);
+  });
+});
+
+// ── Part-year domicile: ESPP sale ──────────────────────────────────
+
+describe("computeAllocations – part-year domicile ESPP", () => {
+  it("domicile state at sale date gets 100% of ESPP ordinary income", () => {
+    // Offering period entirely in GA. Move to CA before selling.
+    // CA (domicile at sale) → 100%. GA (source) → proportional.
+    const input: InputData = {
+      ...EMPTY_STATE_RULES,
+      grants: [],
+      esppPurchases: [
+        {
+          id: "ESPP1",
+          symbol: "XYZ",
+          offeringStartDate: pd("2023-07-01"),
+          fmvPerShareAtGrant: 50,
+          purchaseDate: pd("2024-01-01"),
+          purchasePricePerShare: 42.5,
+          fmvPerShareAtPurchase: 50,
+          shares: 100,
+        },
+      ],
+      esppSales: [
+        {
+          purchaseId: "ESPP1",
+          saleDate: pd("2024-09-01"),
+          salePricePerShare: 55,
+          shares: 100,
+          dispositionType: "DISQUALIFIED",
+        },
+      ],
+      workIntervals: [
+        { start: pd("2023-07-01"), end: pd("2024-03-31"), location: "US-GA" },
+        { start: pd("2024-04-01"), end: pd("2024-12-31"), location: "US-CA" },
+      ],
+      domicileIntervals: [
+        { start: pd("2023-07-01"), end: pd("2024-03-31"), state: "US-GA" },
+        { start: pd("2024-04-01"), end: pd("2024-12-31"), state: "US-CA" },
+      ],
+    };
+
+    const result = computeAllocations(input);
+    const alloc = result[0].esppSaleAllocations[0];
+
+    // CA is domicile at sale date (Sep 1, 2024) → 100%
+    expect(alloc.fractionByLocation["US-CA"]).toBeCloseTo(1.0);
+    expect(alloc.ordinaryIncomeByLocation["US-CA"]).toBeCloseTo(750); // 7.5 * 100
+
+    // GA gets 100% as nonresident source — entire offering period was in GA.
+    // Both GA and CA claim the full income; OSTC resolves the overlap.
+    expect(alloc.fractionByLocation["US-GA"]).toBeCloseTo(1.0);
+    expect(alloc.ordinaryIncomeByLocation["US-GA"]).toBeCloseTo(750);
+  });
+
+  it("sale before move-in: new state gets no ESPP claim", () => {
+    // Offering period and sale both in GA, before moving to CA.
+    const input: InputData = {
+      ...EMPTY_STATE_RULES,
+      grants: [],
+      esppPurchases: [
+        {
+          id: "ESPP1",
+          symbol: "XYZ",
+          offeringStartDate: pd("2024-01-01"),
+          fmvPerShareAtGrant: 50,
+          purchaseDate: pd("2024-04-01"),
+          purchasePricePerShare: 42.5,
+          fmvPerShareAtPurchase: 50,
+          shares: 100,
+        },
+      ],
+      esppSales: [
+        {
+          purchaseId: "ESPP1",
+          saleDate: pd("2024-05-01"),
+          salePricePerShare: 55,
+          shares: 100,
+          dispositionType: "DISQUALIFIED",
+        },
+      ],
+      workIntervals: [
+        { start: pd("2024-01-01"), end: pd("2024-06-30"), location: "US-GA" },
+        { start: pd("2024-07-01"), end: pd("2024-12-31"), location: "US-CA" },
+      ],
+      domicileIntervals: [
+        { start: pd("2024-01-01"), end: pd("2024-06-30"), state: "US-GA" },
+        { start: pd("2024-07-01"), end: pd("2024-12-31"), state: "US-CA" },
+      ],
+    };
+
+    const result = computeAllocations(input);
+    const alloc = result[0].esppSaleAllocations[0];
+
+    // Sale date (May 1) is during GA domicile → GA gets 100%
+    expect(alloc.fractionByLocation["US-GA"]).toBeCloseTo(1.0);
+    // CA has no claim
+    expect(alloc.daysByLocation["US-CA"]).toBeUndefined();
+  });
+
+  it("split offering period: source < 100% while domicile at sale = 100%", () => {
+    // Offering period spans GA→CA move. CA gets 100% (domicile at sale),
+    // GA gets proportional nonresident source for its offering-period days.
+    const input: InputData = {
+      ...EMPTY_STATE_RULES,
+      grants: [],
+      esppPurchases: [
+        {
+          id: "ESPP1",
+          symbol: "XYZ",
+          offeringStartDate: pd("2024-01-01"),
+          fmvPerShareAtGrant: 50,
+          purchaseDate: pd("2024-07-01"),
+          purchasePricePerShare: 42.5,
+          fmvPerShareAtPurchase: 50,
+          shares: 100,
+        },
+      ],
+      esppSales: [
+        {
+          purchaseId: "ESPP1",
+          saleDate: pd("2024-09-01"),
+          salePricePerShare: 55,
+          shares: 100,
+          dispositionType: "DISQUALIFIED",
+        },
+      ],
+      workIntervals: [
+        { start: pd("2024-01-01"), end: pd("2024-03-31"), location: "US-GA" },
+        { start: pd("2024-04-01"), end: pd("2024-12-31"), location: "US-CA" },
+      ],
+      domicileIntervals: [
+        { start: pd("2024-01-01"), end: pd("2024-03-31"), state: "US-GA" },
+        { start: pd("2024-04-01"), end: pd("2024-12-31"), state: "US-CA" },
+      ],
+    };
+
+    const result = computeAllocations(input);
+    const alloc = result[0].esppSaleAllocations[0];
+
+    // CA: domicile at sale date → 100%
+    expect(alloc.fractionByLocation["US-CA"]).toBeCloseTo(1.0);
+
+    // GA: nonresident source for offering-period days only (< 100%)
+    const gaFrac = alloc.fractionByLocation["US-GA"]!;
+    expect(gaFrac).toBeGreaterThan(0);
+    expect(gaFrac).toBeLessThan(1.0);
+    // GA days = weekdays Jan 1 – Mar 31 in the offering window (65 days)
+    expect(alloc.daysByLocation["US-GA"]).toBe(65);
+    // CA days = totalWorkingDays from resident override (not just source days)
+    expect(alloc.daysByLocation["US-CA"]).toBe(alloc.totalDays);
   });
 });

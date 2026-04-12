@@ -13,7 +13,12 @@ import type {
   WorkInterval,
 } from "./types.ts";
 import { countWorkingDaysByLocation } from "./workdays.ts";
-import { buildStateRulesConfig, type StateRulesConfig } from "./state-rules.ts";
+import {
+  buildStateRulesConfig,
+  getResidentStates,
+  resolveNonresidentSourceStates,
+  type StateRulesConfig,
+} from "./state-rules.ts";
 
 function allocateVest(
   grant: Grant,
@@ -22,13 +27,24 @@ function allocateVest(
   nonWorkingIntervals: NonWorkingInterval[],
   stateRulesConfig: StateRulesConfig,
 ): VestAllocation {
+  // 1. Count working days by nonresident source state only (physical
+  //    location, with no-income-tax and de minimis filtering).
   const { daysByLocation, totalWorkingDays } = countWorkingDaysByLocation(
     grant.awardDate,
     vest.date,
     workIntervals,
     nonWorkingIntervals,
     stateRulesConfig,
+    resolveNonresidentSourceStates,
   );
+
+  // 2. Apply resident override: states where the taxpayer is domiciled
+  //    or a statutory resident at the vest date (the income recognition
+  //    date) claim 100% of the income — the "worldwide income" rule.
+  //    (FTB Pub. 1100 §D–E; Example 14)
+  for (const state of getResidentStates(vest.date, stateRulesConfig)) {
+    daysByLocation[state] = totalWorkingDays;
+  }
 
   const fractionByLocation: Record<string, number> = {};
   const incomeByLocation: Record<string, number> = {};
@@ -95,13 +111,21 @@ function allocateEsppSale(
   nonWorkingIntervals: NonWorkingInterval[],
   stateRulesConfig: StateRulesConfig,
 ): EsppSaleAllocation {
+  // 1. Count working days by nonresident source state only.
   const { daysByLocation, totalWorkingDays } = countWorkingDaysByLocation(
     purchase.offeringStartDate,
     purchase.purchaseDate,
     workIntervals,
     nonWorkingIntervals,
     stateRulesConfig,
+    resolveNonresidentSourceStates,
   );
+
+  // 2. Apply resident override at the sale date (the recognition date
+  //    for ESPP ordinary income). Resident states claim 100%.
+  for (const state of getResidentStates(sale.saleDate, stateRulesConfig)) {
+    daysByLocation[state] = totalWorkingDays;
+  }
 
   const discountPerShare = purchase.fmvPerShareAtPurchase - purchase.purchasePricePerShare;
   const ordinaryIncome = computeEsppOrdinaryIncome(purchase, sale);
